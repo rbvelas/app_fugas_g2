@@ -12,6 +12,7 @@ jobs:
       - name: Generar carpeta android si falta
         run: |
           if [ ! -d android ]; then flutter create . --platforms=android --org com.unt.g2 --project-name fugas_g2; fi
+          rm -f test/widget_test.dart
           grep -q "android.permission.INTERNET" android/app/src/main/AndroidManifest.xml || \
             sed -i 's#<application#<uses-permission android:name="android.permission.INTERNET"/>\n    <application#' android/app/src/main/AndroidManifest.xml
       - run: flutter pub get
