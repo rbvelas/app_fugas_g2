@@ -48,7 +48,7 @@ class Lectura {
     final volSalida = _parseNum(json['volumen_salida'])?.toDouble() ?? 0.0;
     final estado = EstadoLectura.fromString(json['estado']?.toString());
     final rssi = _parseNum(json['rssi'])?.toInt();
-    final dispositivo = json['dispositivo']?.toString() ?? 'ESP32_G2';
+    final dispositivo = json['dispositivo']?.toString() ?? 'ESP32';
 
     return Lectura(
       dispositivo: dispositivo,
@@ -110,13 +110,13 @@ class Lectura {
     return '$h:$m:$s';
   }
 
-  /// Formatea la fecha y hora completa en Lima: dd/MM/yyyy HH:mm:ss.
+  /// Formatea la fecha y hora completa en Lima: dd/MM/yyyy HH:mm:ss (Lima, UTC-5).
   String get fechaHoraLimaFormateada {
     final lima = horaLima;
     final d = lima.day.toString().padLeft(2, '0');
     final mo = lima.month.toString().padLeft(2, '0');
     final y = lima.year.toString();
-    return '$d/$mo/$y $horaLimaFormateada (UTC-5)';
+    return '$d/$mo/$y $horaLimaFormateada (Lima, UTC-5)';
   }
 
   static num? _parseNum(dynamic valor) {
@@ -126,4 +126,3 @@ class Lectura {
     return null;
   }
 }
-

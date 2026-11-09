@@ -85,7 +85,7 @@ void main() {
       expect(lectura.volumenSalida, 0.0);
       expect(lectura.estado, EstadoLectura.desconocido);
       expect(lectura.rssi, isNull);
-      expect(lectura.dispositivo, 'ESP32_G2');
+      expect(lectura.dispositivo, 'ESP32');
     });
 
     test('6. Mapeo exhaustivo de estados provenientes del firmware', () {
@@ -141,8 +141,7 @@ void main() {
       );
 
       expect(lectura.horaLimaFormateada, '12:30:45');
-      expect(lectura.fechaHoraLimaFormateada, contains('08/11/2026 12:30:45 (UTC-5)'));
+      expect(lectura.fechaHoraLimaFormateada, contains('08/11/2026 12:30:45 (Lima, UTC-5)'));
     });
   });
 }
-

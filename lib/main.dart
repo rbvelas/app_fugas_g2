@@ -10,7 +10,7 @@ void main() {
 }
 
 /// Aplicación móvil de detección temprana de fugas de agua con IoT.
-/// Universidad Nacional de Trujillo - Ingeniería de Sistemas - Grupo G2.
+/// Universidad Nacional de Trujillo - Ingeniería de Sistemas.
 class FugasApp extends StatelessWidget {
   const FugasApp({super.key});
 
@@ -19,12 +19,12 @@ class FugasApp extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (_) => TelemetriaProvider(),
       child: MaterialApp(
-        title: 'Detección de Fugas G2',
+        title: 'Aqualerta',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           useMaterial3: true,
           colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color(0xFF0288D1), // Azul agua IoT
+            seedColor: const Color(0xFF0E7FB8), // Azul agua institucional #0E7FB8
             brightness: Brightness.light,
           ),
           appBarTheme: const AppBarTheme(
@@ -46,4 +46,3 @@ class FugasApp extends StatelessWidget {
     );
   }
 }
-

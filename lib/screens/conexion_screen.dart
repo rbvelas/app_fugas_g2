@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/conexion_estado.dart';
 import '../providers/telemetria_provider.dart';
+import '../widgets/demo_banner.dart';
 
 /// Pantalla de configuración y gestión de la conexión MQTT con el broker EMQX.
+/// Incluye interruptor de Modo DEMO (simulación local sin broker).
 /// La contraseña ingresada reside exclusivamente en la memoria RAM y nunca
 /// es persistida en almacenamiento local ni registrada en logs.
 class ConexionScreen extends StatefulWidget {
@@ -26,17 +28,10 @@ class _ConexionScreenState extends State<ConexionScreen> {
   void initState() {
     super.initState();
     final provider = context.read<TelemetriaProvider>();
-    // Usar marcador <HOST> o el host configurado previamente
-    _hostController = TextEditingController(
-      text: provider.host.isNotEmpty ? provider.host : '',
-    );
-    _puertoController = TextEditingController(
-      text: provider.puerto.toString(),
-    );
-    _usuarioController = TextEditingController(
-      text: provider.usuario,
-    );
-    // La contraseña vive exclusivamente en este controlador en memoria
+    // Sin valores por defecto inventados ni marcadores en el texto inicial
+    _hostController = TextEditingController(text: provider.host);
+    _puertoController = TextEditingController(text: provider.puerto.toString());
+    _usuarioController = TextEditingController(text: provider.usuario);
     _passwordController = TextEditingController();
   }
 
@@ -79,6 +74,7 @@ class _ConexionScreenState extends State<ConexionScreen> {
     final estado = provider.estadoConexion;
     final estaConectado = estado == ConexionEstado.conectado;
     final estaConectando = estado == ConexionEstado.conectando;
+    final esDemo = provider.modoDemoActivo;
 
     return Scaffold(
       appBar: AppBar(
@@ -87,159 +83,273 @@ class _ConexionScreenState extends State<ConexionScreen> {
           style: TextStyle(fontWeight: FontWeight.w800),
         ),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Tarjeta visual del estado de la conexión
-              _buildTarjetaEstado(theme, estado, provider.mensajeError),
+      body: Column(
+        children: [
+          if (esDemo) const DemoBanner(),
 
-              const SizedBox(height: 20),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16.0),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // 1. Interruptor Modo DEMO
+                    _buildSwitchModoDemo(theme, provider),
 
-              // Campo Host / IP
-              TextFormField(
-                controller: _hostController,
-                enabled: !estaConectando && !estaConectado,
-                decoration: const InputDecoration(
-                  labelText: 'Host o Dirección IP del Broker',
-                  hintText: '<HOST> o 192.168.1.100',
-                  helperText: 'Broker EMQX 5.8.6 (marcador <HOST>)',
-                  prefixIcon: Icon(Icons.dns_rounded),
-                  border: OutlineInputBorder(),
-                ),
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Ingrese la dirección del broker MQTT';
-                  }
-                  return null;
-                },
-              ),
+                    const SizedBox(height: 16),
 
-              const SizedBox(height: 16),
+                    // 2. Tarjeta visual del estado de la conexión
+                    _buildTarjetaEstado(theme, estado, provider.mensajeError, esDemo),
 
-              // Campo Puerto (por defecto 1883)
-              TextFormField(
-                controller: _puertoController,
-                enabled: !estaConectando && !estaConectado,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Puerto TCP',
-                  hintText: '1883',
-                  helperText: 'Puerto TCP estándar para MQTT sin TLS (1883)',
-                  prefixIcon: Icon(Icons.numbers_rounded),
-                  border: OutlineInputBorder(),
-                ),
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Ingrese el puerto del broker';
-                  }
-                  final p = int.tryParse(value.trim());
-                  if (p == null || p <= 0 || p > 65535) {
-                    return 'Puerto inválido (1 - 65535)';
-                  }
-                  return null;
-                },
-              ),
+                    const SizedBox(height: 20),
 
-              const SizedBox(height: 16),
-
-              // Campo Usuario (opcional)
-              TextFormField(
-                controller: _usuarioController,
-                enabled: !estaConectando && !estaConectado,
-                decoration: const InputDecoration(
-                  labelText: 'Usuario MQTT (Opcional)',
-                  hintText: 'Dejar vacío si no requiere autenticación',
-                  prefixIcon: Icon(Icons.person_rounded),
-                  border: OutlineInputBorder(),
-                ),
-              ),
-
-              const SizedBox(height: 16),
-
-              // Campo Contraseña (campo oculto, memoria volátil)
-              TextFormField(
-                controller: _passwordController,
-                enabled: !estaConectando && !estaConectado,
-                obscureText: _ocultarPassword,
-                decoration: InputDecoration(
-                  labelText: 'Contraseña (Opcional)',
-                  hintText: 'Reside únicamente en memoria RAM',
-                  prefixIcon: const Icon(Icons.lock_rounded),
-                  border: const OutlineInputBorder(),
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                      _ocultarPassword
-                          ? Icons.visibility_rounded
-                          : Icons.visibility_off_rounded,
+                    // 3. Campo Host / IP
+                    TextFormField(
+                      controller: _hostController,
+                      enabled: !estaConectando && !estaConectado && !esDemo,
+                      decoration: const InputDecoration(
+                        labelText: 'Host o Dirección IP del Broker',
+                        hintText: 'IP del equipo donde corre EMQX',
+                        helperText: 'Broker EMQX 5.8.6 (TCP)',
+                        prefixIcon: Icon(Icons.dns_rounded),
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) {
+                        if (esDemo) return null;
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Ingrese la IP o dirección del broker MQTT';
+                        }
+                        return null;
+                      },
                     ),
-                    onPressed: () {
-                      setState(() {
-                        _ocultarPassword = !_ocultarPassword;
-                      });
-                    },
-                    tooltip: _ocultarPassword ? 'Mostrar contraseña' : 'Ocultar contraseña',
-                    constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                  ),
-                ),
-              ),
 
-              const SizedBox(height: 24),
+                    const SizedBox(height: 16),
 
-              // Botón principal Conectar / Desconectar (Altura ≥ 48 dp)
-              SizedBox(
-                height: 52, // Cumple requisito botones ≥ 48 dp
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: estaConectado
-                        ? const Color(0xFFD32F2F)
-                        : (estaConectando ? Colors.amber.shade800 : null),
-                    foregroundColor: estaConectado || estaConectando
-                        ? Colors.white
-                        : null,
-                    elevation: 2,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                    // 4. Campo Puerto (por defecto 1883)
+                    TextFormField(
+                      controller: _puertoController,
+                      enabled: !estaConectando && !estaConectado && !esDemo,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Puerto TCP',
+                        hintText: '1883',
+                        helperText: 'Puerto TCP estándar para MQTT sin TLS (1883)',
+                        prefixIcon: Icon(Icons.numbers_rounded),
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) {
+                        if (esDemo) return null;
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Ingrese el puerto del broker';
+                        }
+                        final p = int.tryParse(value.trim());
+                        if (p == null || p <= 0 || p > 65535) {
+                          return 'Puerto inválido (1 - 65535)';
+                        }
+                        return null;
+                      },
                     ),
-                  ),
-                  onPressed: estaConectando ? null : () => _ejecutarAccionConexion(provider),
-                  icon: estaConectando
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.5,
-                            color: Colors.white,
+
+                    const SizedBox(height: 16),
+
+                    // 5. Campo Usuario (opcional)
+                    TextFormField(
+                      controller: _usuarioController,
+                      enabled: !estaConectando && !estaConectado && !esDemo,
+                      decoration: const InputDecoration(
+                        labelText: 'Usuario MQTT (Opcional)',
+                        hintText: 'Dejar vacío si no requiere autenticación',
+                        prefixIcon: Icon(Icons.person_rounded),
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // 6. Campo Contraseña (campo oculto, memoria volátil)
+                    TextFormField(
+                      controller: _passwordController,
+                      enabled: !estaConectando && !estaConectado && !esDemo,
+                      obscureText: _ocultarPassword,
+                      decoration: InputDecoration(
+                        labelText: 'Contraseña (Opcional)',
+                        hintText: 'Reside únicamente en memoria RAM',
+                        prefixIcon: const Icon(Icons.lock_rounded),
+                        border: const OutlineInputBorder(),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _ocultarPassword
+                                ? Icons.visibility_rounded
+                                : Icons.visibility_off_rounded,
                           ),
-                        )
-                      : Icon(estaConectado ? Icons.power_settings_new_rounded : Icons.link_rounded),
-                  label: Text(
-                    estaConectando
-                        ? 'Conectando...'
-                        : (estaConectado ? 'Desconectar del Broker' : 'Conectar al Broker'),
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
+                          onPressed: () {
+                            setState(() {
+                              _ocultarPassword = !_ocultarPassword;
+                            });
+                          },
+                          tooltip: _ocultarPassword
+                              ? 'Mostrar contraseña'
+                              : 'Ocultar contraseña',
+                          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                        ),
+                      ),
                     ),
-                  ),
+
+                    const SizedBox(height: 24),
+
+                    // 7. Botón principal Conectar / Desconectar (Altura ≥ 48 dp)
+                    SizedBox(
+                      height: 52, // Cumple requisito botones ≥ 48 dp
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: estaConectado
+                              ? const Color(0xFFD32F2F)
+                              : (estaConectando ? Colors.amber.shade800 : null),
+                          foregroundColor: estaConectado || estaConectando
+                              ? Colors.white
+                              : null,
+                          elevation: 2,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        onPressed: estaConectando || esDemo
+                            ? null
+                            : () => _ejecutarAccionConexion(provider),
+                        icon: estaConectando
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : Icon(estaConectado
+                                ? Icons.power_settings_new_rounded
+                                : Icons.link_rounded),
+                        label: Text(
+                          estaConectando
+                              ? 'Conectando...'
+                              : (estaConectado
+                                  ? 'Desconectar del Broker'
+                                  : 'Conectar al Broker'),
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    // 8. Tarjeta informativa de privacidad y seguridad
+                    _buildTarjetaInformacion(theme),
+                  ],
                 ),
               ),
-
-              const SizedBox(height: 24),
-
-              // Tarjeta informativa de arquitectura y seguridad
-              _buildTarjetaInformacion(theme),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
 
-  Widget _buildTarjetaEstado(ThemeData theme, ConexionEstado estado, String? error) {
+  Widget _buildSwitchModoDemo(ThemeData theme, TelemetriaProvider provider) {
+    return Container(
+      decoration: BoxDecoration(
+        color: provider.modoDemoActivo
+            ? const Color(0xFFFFF3E0)
+            : theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: provider.modoDemoActivo
+              ? const Color(0xFFFF9800)
+              : theme.colorScheme.outlineVariant.withOpacity(0.5),
+          width: provider.modoDemoActivo ? 1.5 : 1.0,
+        ),
+      ),
+      child: SwitchListTile(
+        title: const Row(
+          children: [
+            Icon(Icons.science_rounded, size: 20, color: Color(0xFFE65100)),
+            SizedBox(width: 8),
+            Text(
+              'Modo DEMO',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+            ),
+          ],
+        ),
+        subtitle: const Text(
+          'Reproduce datos ficticios en bucle (60 filas, 1 lect/s) sin broker MQTT.',
+          style: TextStyle(fontSize: 12),
+        ),
+        value: provider.modoDemoActivo,
+        activeColor: const Color(0xFFE65100),
+        onChanged: (valor) {
+          provider.setModoDemo(valor);
+        },
+      ),
+    );
+  }
+
+  Widget _buildTarjetaEstado(
+    ThemeData theme,
+    ConexionEstado estado,
+    String? error,
+    bool esDemo,
+  ) {
+    if (esDemo) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF3E0),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFFF9800), width: 1.5),
+        ),
+        child: const Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.science_rounded, color: Color(0xFFE65100), size: 28),
+            SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'ESTADO DEL SISTEMA',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.6,
+                      color: Color(0xFFE65100),
+                    ),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    'Modo DEMO activo',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFFE65100),
+                    ),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    'Simulando telemetría desde assets/demo_telemetria.csv.',
+                    style: TextStyle(fontSize: 12, color: Color(0xFF424242)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -298,7 +408,7 @@ class _ConexionScreenState extends State<ConexionScreen> {
                 ] else if (estado == ConexionEstado.conectado) ...[
                   const SizedBox(height: 4),
                   const Text(
-                    'Suscrito a tópico: unt/iot/g2/riego/telemetria (QoS 0)',
+                    'Suscrito a: telemetria (QoS 0) y equipo (QoS 1)',
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
