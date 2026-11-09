@@ -1,0 +1,17 @@
+# Variables de entorno y secretos
+.env
+*.jks
+key.properties
+*.keystore
+
+# Flutter y Dart
+build/
+.dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# IDEs y editores
+.idea/
+.vscode/
+*.iml

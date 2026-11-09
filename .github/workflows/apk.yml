@@ -1,0 +1,21 @@
+name: Compilar APK
+on: [workflow_dispatch]
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable }
+      - name: Generar carpeta android si falta
+        run: |
+          if [ ! -d android ]; then flutter create . --platforms=android --org com.unt.g2 --project-name fugas_g2; fi
+          grep -q "android.permission.INTERNET" android/app/src/main/AndroidManifest.xml || \
+            sed -i 's#<application#<uses-permission android:name="android.permission.INTERNET"/>\n    <application#' android/app/src/main/AndroidManifest.xml
+      - run: flutter pub get
+      - run: flutter test
+      - run: flutter build apk --release
+      - uses: actions/upload-artifact@v4
+        with: { name: app-release, path: build/app/outputs/flutter-apk/app-release.apk }
