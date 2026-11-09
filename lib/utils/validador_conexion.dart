@@ -4,19 +4,23 @@ class ValidadorConexion {
   ValidadorConexion._();
 
   /// Valida la dirección del host o IP.
-  /// No admite valores vacíos, espacios en blanco ni esquemas de protocolo (http://, mqtt://, etc.).
+  /// No admite valores vacíos, espacios en blanco (en cualquier posición) ni esquemas de protocolo (http://, mqtt://, etc.).
   static String? validarHost(String? valor) {
-    if (valor == null || valor.trim().isEmpty) {
+    if (valor == null || valor.isEmpty) {
       return 'Ingrese la IP o dirección del broker MQTT';
     }
 
-    final texto = valor.trim();
-
-    if (texto.contains(' ')) {
+    // Comprobación estricta de espacios: no se permite ningún espacio en blanco
+    if (valor.contains(' ')) {
       return 'El host no debe contener espacios en blanco';
     }
 
-    // Detectar presencia de esquemas de protocolo comunes
+    final texto = valor.trim();
+    if (texto.isEmpty) {
+      return 'Ingrese la IP o dirección del broker MQTT';
+    }
+
+    // Detectar presencia de esquemas de protocolo comunes (http://, mqtt://, ws://, etc.)
     final regexEsquema = RegExp(r'^[a-zA-Z]+://');
     if (regexEsquema.hasMatch(texto) || texto.contains('://')) {
       return 'El host no debe incluir esquema (no use http://, mqtt://, etc.)';
@@ -50,4 +54,3 @@ class ValidadorConexion {
     return valor.trim();
   }
 }
-

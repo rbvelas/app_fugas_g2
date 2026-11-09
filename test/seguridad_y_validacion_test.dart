@@ -58,12 +58,13 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('Seguridad: Validación de entradas del usuario (Host, Puerto, Usuario)', () {
-    test('1. Validación de Host: rechaza espacios y esquemas de protocolo', () {
-      // Espacios
-      expect(ValidadorConexion.validarHost('192.168.1. 100'), contains('espacios'));
+    test('1. Validación de Host: rechaza espacios y esquemas', () {
+      // Casos con espacios (intermedios o al inicio/fin)
+      expect(ValidadorConexion.validarHost('192.168.0. 20'), contains('espacios'));
+      expect(ValidadorConexion.validarHost(' broker'), contains('espacios'));
       expect(ValidadorConexion.validarHost(' broker.emqx.io '), contains('espacios'));
 
-      // Esquemas de protocolo no permitidos
+      // Casos con esquemas de protocolo
       expect(ValidadorConexion.validarHost('http://192.168.1.100'), contains('esquema'));
       expect(ValidadorConexion.validarHost('https://broker.emqx.io'), contains('esquema'));
       expect(ValidadorConexion.validarHost('mqtt://192.168.1.50'), contains('esquema'));
@@ -71,21 +72,19 @@ void main() {
       expect(ValidadorConexion.validarHost('ws://192.168.1.100'), contains('esquema'));
       expect(ValidadorConexion.validarHost('tcp://192.168.1.100'), contains('esquema'));
 
-      // Valores válidos
+      // Valores válidos sin espacios ni esquemas
       expect(ValidadorConexion.validarHost('192.168.1.100'), isNull);
       expect(ValidadorConexion.validarHost('broker.emqx.io'), isNull);
       expect(ValidadorConexion.validarHost('10.0.2.2'), isNull);
     });
 
     test('2. Validación de Puerto: rango estricto de 1 a 65535 y formato entero', () {
-      // Puertos inválidos
       expect(ValidadorConexion.validarPuerto('0'), contains('1 y 65535'));
       expect(ValidadorConexion.validarPuerto('-1'), contains('1 y 65535'));
       expect(ValidadorConexion.validarPuerto('65536'), contains('1 y 65535'));
       expect(ValidadorConexion.validarPuerto('abc'), contains('entero'));
       expect(ValidadorConexion.validarPuerto(''), contains('puerto'));
 
-      // Puertos válidos
       expect(ValidadorConexion.validarPuerto('1883'), isNull);
       expect(ValidadorConexion.validarPuerto('8883'), isNull);
       expect(ValidadorConexion.validarPuerto('1'), isNull);
@@ -118,8 +117,8 @@ void main() {
       mockClient.debeFallarConexion = true;
       mockClient.tipoFallo = 'tls';
 
-      // Intentar conectar con fallo de TLS
-      await provider.conectar(
+      // Disparar conexión fallida de forma explícita
+      final exito = await provider.conectar(
         host: '192.168.1.100',
         puerto: 8883,
         usuario: 'admin',
@@ -127,15 +126,16 @@ void main() {
         usarTls: true,
       );
 
+      expect(exito, isFalse);
       expect(provider.estadoConexion, ConexionEstado.error);
       expect(provider.mensajeError, isNotNull);
 
-      // Comprobar rigurosamente que la contraseña NO aparece en el texto del error
+      // Comprobar rigurosamente que la contraseña NO aparece en el texto del error expuesto
       expect(provider.mensajeError!.contains(contrasenaSecreta), isFalse);
       expect(mqttService.ultimoError!.contains(contrasenaSecreta), isFalse);
     });
 
-    test('5. Desconectar borra la contraseña de la memoria RAM', () async {
+    test('5. Desconectar borra la contraseña de la memoria', () async {
       const claveEnMemoria = 'Password_Temporal_123';
       mockClient.debeFallarConexion = false;
 
@@ -146,11 +146,14 @@ void main() {
         password: claveEnMemoria,
       );
 
-      // Al llamar a desconectar(), la contraseña debe eliminarse
+      // Comprobar que provider tiene la contraseña cargada en sesión
+      expect(provider.tieneContrasena, isTrue);
+
+      // Al llamar a desconectar(), la contraseña debe eliminarse de la RAM
       await provider.desconectar();
 
-      // Comprobar que provider no retiene la contraseña internamente
-      // Simulamos nuevo intento con contraseña nula para verificar que no quedó persistida
+      // Comprobar mediante el getter de solo lectura que la contraseña fue borrada
+      expect(provider.tieneContrasena, isFalse);
       expect(provider.estadoConexion, ConexionEstado.desconectado);
     });
   });
@@ -238,11 +241,9 @@ void main() {
 
       await Future.delayed(const Duration(milliseconds: 50));
 
-      // Se descartaron exactamente los 4 mensajes inválidos; el 5to fue aceptado
       expect(provider.mensajesDescartados, 4);
       expect(provider.ultimaLectura, isNotNull);
       expect(provider.ultimaLectura!.diferenciaPorcentaje, -1.5);
     });
   });
 }
-

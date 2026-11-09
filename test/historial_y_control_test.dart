@@ -245,50 +245,57 @@ void main() {
       expect(provider.historialCambiosEstado, isEmpty);
     });
 
-    test('3. Lógica de "sin confirmar" tras enviar orden si pasan 5 segundos sin confirmación', () {
-      fakeAsync((async) {
-        expect(provider.esperandoConfirmacion, isFalse);
-        expect(provider.confirmacionExpirada, isFalse);
+    test('3. Lógica de "sin confirmar" tras timeout inyectado sin fakeAsync', () async {
+      // Inyección de timeout de 50 ms para pruebas rápidas y deterministas
+      final providerConTimeoutCorto = TelemetriaProvider(
+        mqttService: mqttService,
+        timeoutConfirmacion: const Duration(milliseconds: 50),
+      );
 
-        provider.enviarOrden('PAUSAR');
+      expect(providerConTimeoutCorto.esperandoConfirmacion, isFalse);
+      expect(providerConTimeoutCorto.confirmacionExpirada, isFalse);
 
-        expect(provider.esperandoConfirmacion, isTrue);
-        expect(provider.confirmacionExpirada, isFalse);
-        expect(provider.ordenPendiente, 'PAUSAR');
+      await providerConTimeoutCorto.enviarOrden('PAUSAR');
 
-        // Avanzar el tiempo 4 segundos (aún esperando)
-        async.elapse(const Duration(seconds: 4));
-        expect(provider.esperandoConfirmacion, isTrue);
-        expect(provider.confirmacionExpirada, isFalse);
+      expect(providerConTimeoutCorto.esperandoConfirmacion, isTrue);
+      expect(providerConTimeoutCorto.confirmacionExpirada, isFalse);
+      expect(providerConTimeoutCorto.ordenPendiente, 'PAUSAR');
 
-        // Superar los 5 segundos de umbral
-        async.elapse(const Duration(milliseconds: 1100));
+      // Esperar 120 ms (supera el umbral inyectado de 50 ms)
+      await Future.delayed(const Duration(milliseconds: 120));
 
-        expect(provider.esperandoConfirmacion, isFalse);
-        expect(provider.confirmacionExpirada, isTrue);
-      });
+      expect(providerConTimeoutCorto.esperandoConfirmacion, isFalse);
+      expect(providerConTimeoutCorto.confirmacionExpirada, isTrue);
+
+      providerConTimeoutCorto.dispose();
     });
 
-    test('4. Confirmación exitosa en tópico equipo dentro de los 5 segundos cancela timeout', () {
-      fakeAsync((async) {
-        provider.enviarOrden('PAUSAR');
-        expect(provider.esperandoConfirmacion, isTrue);
+    test('4. Confirmación exitosa en tópico equipo dentro del tiempo cancela timeout', () async {
+      final providerConTimeoutCorto = TelemetriaProvider(
+        mqttService: mqttService,
+        timeoutConfirmacion: const Duration(milliseconds: 50),
+      );
 
-        // Recepción pública directa sin clases internas de mqtt_client
-        mqttService.procesarMensajeRecibido(
-          MqttTopicos.equipo,
-          jsonEncode({'activo': false}),
-        );
+      await providerConTimeoutCorto.enviarOrden('PAUSAR');
+      expect(providerConTimeoutCorto.esperandoConfirmacion, isTrue);
 
-        async.elapse(const Duration(milliseconds: 100));
+      // Recepción pública directa sin clases internas de mqtt_client
+      mqttService.procesarMensajeRecibido(
+        MqttTopicos.equipo,
+        jsonEncode({'activo': false}),
+      );
 
-        expect(provider.esperandoConfirmacion, isFalse);
-        expect(provider.confirmacionExpirada, isFalse);
-        expect(provider.equipoActivo, isFalse);
+      await Future.delayed(const Duration(milliseconds: 10));
 
-        async.elapse(const Duration(seconds: 10));
-        expect(provider.confirmacionExpirada, isFalse);
-      });
+      expect(providerConTimeoutCorto.esperandoConfirmacion, isFalse);
+      expect(providerConTimeoutCorto.confirmacionExpirada, isFalse);
+      expect(providerConTimeoutCorto.equipoActivo, isFalse);
+
+      // Esperar que transcurran 120 ms adicionales para comprobar que el timeout fue cancelado
+      await Future.delayed(const Duration(milliseconds: 120));
+      expect(providerConTimeoutCorto.confirmacionExpirada, isFalse);
+
+      providerConTimeoutCorto.dispose();
     });
   });
 }

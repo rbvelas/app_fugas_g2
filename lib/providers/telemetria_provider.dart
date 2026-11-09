@@ -15,6 +15,7 @@ import '../utils/validador_conexion.dart';
 /// estado del equipo y lógica de confirmación, conteo de mensajes descartados y Modo DEMO.
 class TelemetriaProvider with ChangeNotifier {
   final MqttService _mqttService;
+  final Duration timeoutConfirmacion;
 
   // Parámetros de conexión (sin credenciales por defecto)
   String _host = '';
@@ -57,8 +58,10 @@ class TelemetriaProvider with ChangeNotifier {
   StreamSubscription<int>? _descartadosSub;
   Timer? _temporizadorVigilancia;
 
-  TelemetriaProvider({MqttService? mqttService})
-      : _mqttService = mqttService ?? MqttService() {
+  TelemetriaProvider({
+    MqttService? mqttService,
+    this.timeoutConfirmacion = const Duration(seconds: 5),
+  }) : _mqttService = mqttService ?? MqttService() {
     _inicializarSubscripciones();
     _iniciarTemporizadorVigilancia();
   }
@@ -78,6 +81,10 @@ class TelemetriaProvider with ChangeNotifier {
   int get puerto => _puerto;
   String get usuario => _usuario;
   bool get usarTls => _usarTls;
+
+  /// Getter de solo lectura que indica si hay una contraseña cargada en la memoria volátil.
+  /// No expone el valor de la contraseña en texto plano.
+  bool get tieneContrasena => _password.isNotEmpty;
 
   bool? get equipoActivo => _equipoActivo;
   bool get esperandoConfirmacion => _esperandoConfirmacion;
@@ -196,7 +203,7 @@ class TelemetriaProvider with ChangeNotifier {
   }
 
   /// Publica una orden ("PAUSAR" o "REANUDAR") en unt/iot/g2/riego/comando (QoS 1).
-  /// Inicia un temporizador de 5 segundos: si no llega confirmación en 5 s, muestra "sin confirmar".
+  /// Inicia el temporizador de confirmación configurable: si no llega confirmación, muestra "sin confirmar".
   Future<bool> enviarOrden(String orden) async {
     if (_modoDemoActivo) {
       return false; // En modo demo los controles están deshabilitados
@@ -209,7 +216,7 @@ class TelemetriaProvider with ChangeNotifier {
     notifyListeners();
 
     _temporizadorConfirmacion?.cancel();
-    _temporizadorConfirmacion = Timer(const Duration(seconds: 5), () {
+    _temporizadorConfirmacion = Timer(timeoutConfirmacion, () {
       if (_esperandoConfirmacion) {
         _esperandoConfirmacion = false;
         _confirmacionExpirada = true; // "sin confirmar"
@@ -389,13 +396,20 @@ class TelemetriaProvider with ChangeNotifier {
       usarTls: _usarTls,
     );
 
+    // Sincronizar de inmediato el estado del provider con el servicio MQTT
+    _estadoConexion = _mqttService.estado;
+    _mensajeError = _mqttService.ultimoError;
+    notifyListeners();
+
     return exito;
   }
 
-  /// Desconecta la sesión MQTT y borra la contraseña de la memoria.
+  /// Desconecta la sesión MQTT y borra la contraseña de la memoria RAM.
   Future<void> desconectar() async {
     await _mqttService.desconectar();
     _password = ''; // Borrado riguroso de la contraseña en RAM al desconectar
+    _estadoConexion = ConexionEstado.desconectado;
+    _mensajeError = null;
     _hayDatosRecientes = false;
     _alertaFugaActiva = false;
     _estadoAnterior = null;
