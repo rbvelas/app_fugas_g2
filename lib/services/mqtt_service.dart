@@ -11,7 +11,6 @@ import '../models/lectura.dart';
 /// Abstracción del cliente MQTT para permitir inyección de dependencias
 /// y pruebas unitarias aisladas sin necesidad de un broker real.
 abstract class IMqttClientWrapper {
-  Stream<List<MqttReceivedMessage<MqttMessage>>>? get updates;
   bool get estaConectado;
 
   Future<bool> conectar({
@@ -20,6 +19,7 @@ abstract class IMqttClientWrapper {
     required String clientId,
     String? usuario,
     String? password,
+    void Function(String topico, String payload)? onMessage,
     void Function()? onConnected,
     void Function()? onDisconnected,
     void Function()? onAutoReconnected,
@@ -35,9 +35,6 @@ class RealMqttClientWrapper implements IMqttClientWrapper {
   MqttServerClient? _client;
 
   @override
-  Stream<List<MqttReceivedMessage<MqttMessage>>>? get updates => _client?.updates;
-
-  @override
   bool get estaConectado =>
       _client?.connectionStatus?.state == MqttConnectionState.connected;
 
@@ -48,6 +45,7 @@ class RealMqttClientWrapper implements IMqttClientWrapper {
     required String clientId,
     String? usuario,
     String? password,
+    void Function(String topico, String payload)? onMessage,
     void Function()? onConnected,
     void Function()? onDisconnected,
     void Function()? onAutoReconnected,
@@ -76,7 +74,23 @@ class RealMqttClientWrapper implements IMqttClientWrapper {
 
     try {
       final status = await client.connect();
-      return status?.state == MqttConnectionState.connected;
+      if (status?.state != MqttConnectionState.connected) {
+        return false;
+      }
+
+      client.updates?.listen((messages) {
+        if (messages == null) return;
+        for (final message in messages) {
+          try {
+            final publish = message.payload as MqttPublishMessage;
+            final payload = utf8.decode(publish.payload.message);
+            onMessage?.call(message.topic, payload);
+          } catch (_) {
+            // Ignorar payloads MQTT malformados.
+          }
+        }
+      });
+      return true;
     } catch (_) {
       client.disconnect();
       return false;
@@ -167,6 +181,7 @@ class MqttService {
         clientId: clientId,
         usuario: usuario,
         password: password,
+        onMessage: procesarMensajeRecibido,
         onConnected: () {
           _actualizarEstado(ConexionEstado.conectado);
           // Suscripción al tópico de telemetría con QoS 0
@@ -183,9 +198,7 @@ class MqttService {
           _actualizarEstado(ConexionEstado.conectado);
         },
       );
-
       if (conectado) {
-        _escucharMensajes();
         return true;
       } else {
         _actualizarEstado(
@@ -203,23 +216,8 @@ class MqttService {
     }
   }
 
-  void _escucharMensajes() {
-    _clientWrapper.updates?.listen((List<MqttReceivedMessage<MqttMessage>>? messages) {
-      if (messages == null || messages.isEmpty) return;
-      for (final msg in messages) {
-        final recMess = msg.payload as MqttPublishMessage;
-        try {
-          final payloadStr = utf8.decode(recMess.payload.message);
-          _procesarMensajeRecibido(msg.topic, payloadStr);
-        } catch (_) {
-          // Ignorar cualquier fallo de decodificación
-        }
-      }
-    });
-  }
-
   /// Procesa los mensajes recibidos por tópico y alimenta los streams respectivos.
-  void _procesarMensajeRecibido(String topico, String payloadStr) {
+  void procesarMensajeRecibido(String topico, String payloadStr) {
     _ultimoMensajeBruto = payloadStr;
     if (!_mensajesBrutosController.isClosed) {
       _mensajesBrutosController.add(payloadStr);

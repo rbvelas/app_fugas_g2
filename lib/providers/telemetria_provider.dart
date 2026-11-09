@@ -14,6 +14,7 @@ import '../services/mqtt_service.dart';
 /// estado del equipo y lógica de confirmación (5 s), y Modo DEMO desde CSV.
 class TelemetriaProvider with ChangeNotifier {
   final MqttService _mqttService;
+  final Duration _duracionTimeoutConfirmacion;
 
   // Parámetros de conexión (sin valores por defecto en host/usuario/password)
   String _host = '';
@@ -52,8 +53,11 @@ class TelemetriaProvider with ChangeNotifier {
   StreamSubscription<String>? _brutosSub;
   Timer? _temporizadorVigilancia;
 
-  TelemetriaProvider({MqttService? mqttService})
-      : _mqttService = mqttService ?? MqttService() {
+  TelemetriaProvider({
+    MqttService? mqttService,
+    Duration duracionTimeoutConfirmacion = const Duration(seconds: 5),
+  })  : _mqttService = mqttService ?? MqttService(),
+        _duracionTimeoutConfirmacion = duracionTimeoutConfirmacion {
     _inicializarSubscripciones();
     _iniciarTemporizadorVigilancia();
   }
@@ -187,7 +191,7 @@ class TelemetriaProvider with ChangeNotifier {
 
     // Cancelar temporizador previo si existiera
     _temporizadorConfirmacion?.cancel();
-    _temporizadorConfirmacion = Timer(const Duration(seconds: 5), () {
+    _temporizadorConfirmacion = Timer(_duracionTimeoutConfirmacion, () {
       if (_esperandoConfirmacion) {
         _esperandoConfirmacion = false;
         _confirmacionExpirada = true; // "sin confirmar"

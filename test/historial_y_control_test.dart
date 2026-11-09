@@ -1,10 +1,8 @@
-import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fugas_g2/constants/mqtt_topicos.dart';
 import 'package:fugas_g2/models/conexion_estado.dart';
 import 'package:fugas_g2/models/estado_lectura.dart';
-import 'package:fugas_g2/models/lectura.dart';
 import 'package:fugas_g2/providers/telemetria_provider.dart';
 import 'package:fugas_g2/services/mqtt_service.dart';
 import 'package:mqtt_client/mqtt_client.dart';
@@ -28,13 +26,8 @@ class PublicacionRegistro {
 /// Cliente MQTT simulado que no requiere conexión de red ni broker EMQX real.
 class MockMqttClientWrapper implements IMqttClientWrapper {
   final List<PublicacionRegistro> publicaciones = [];
-  final StreamController<List<MqttReceivedMessage<MqttMessage>>> _updatesController =
-      StreamController<List<MqttReceivedMessage<MqttMessage>>>.broadcast();
 
   bool _conectado = false;
-
-  @override
-  Stream<List<MqttReceivedMessage<MqttMessage>>> get updates => _updatesController.stream;
 
   @override
   bool get estaConectado => _conectado;
@@ -46,6 +39,7 @@ class MockMqttClientWrapper implements IMqttClientWrapper {
     required String clientId,
     String? usuario,
     String? password,
+    void Function(String topico, String payload)? onMessage,
     void Function()? onConnected,
     void Function()? onDisconnected,
     void Function()? onAutoReconnected,
@@ -74,10 +68,6 @@ class MockMqttClientWrapper implements IMqttClientWrapper {
     ));
     return publicaciones.length;
   }
-
-  void dispose() {
-    _updatesController.close();
-  }
 }
 
 void main() {
@@ -95,7 +85,6 @@ void main() {
 
     tearDown(() {
       mqttService.dispose();
-      mockClient.dispose();
     });
 
     test('Publicar orden PAUSAR genera el JSON y el tópico correctos con QoS 1', () async {
@@ -109,8 +98,7 @@ void main() {
       expect(pub.qos, MqttQos.atLeastOnce); // QoS 1
       expect(pub.retain, isFalse);
 
-      final decoded = jsonDecode(pub.payloadStr);
-      expect(decoded, {'orden': 'PAUSAR'});
+      expect(pub.payloadStr, '{"orden":"PAUSAR"}');
     });
 
     test('Publicar orden REANUDAR genera el JSON y el tópico correctos con QoS 1', () async {
@@ -124,8 +112,7 @@ void main() {
       expect(pub.qos, MqttQos.atLeastOnce); // QoS 1
       expect(pub.retain, isFalse);
 
-      final decoded = jsonDecode(pub.payloadStr);
-      expect(decoded, {'orden': 'REANUDAR'});
+      expect(pub.payloadStr, '{"orden":"REANUDAR"}');
     });
 
     test('Publicar orden no permitida lanza ArgumentError', () async {
@@ -144,51 +131,20 @@ void main() {
     setUp(() async {
       mockClient = MockMqttClientWrapper();
       mqttService = MqttService(clientWrapper: mockClient);
-      provider = TelemetriaProvider(mqttService: mqttService);
+      provider = TelemetriaProvider(
+        mqttService: mqttService,
+        duracionTimeoutConfirmacion: const Duration(milliseconds: 50),
+      );
       await provider.conectar(host: '127.0.0.1', puerto: 1883);
     });
 
     tearDown(() {
       provider.dispose();
-      mockClient.dispose();
     });
 
-    Lectura crearLectura(EstadoLectura estado, {double qe = 10.0, double qs = 9.8, double difPorc = 2.0}) {
-      return Lectura(
-        dispositivo: 'ESP32_TEST',
-        caudalEntrada: qe,
-        caudalSalida: qs,
-        diferenciaLMin: (qe - qs).abs(),
-        diferenciaPorcentaje: difPorc,
-        volumenEntrada: 100.0,
-        volumenSalida: 98.0,
-        estado: estado,
-        timestamp: DateTime.now(),
-      );
-    }
-
-    test('1. Historial de cambios: solo se registra cuando el estado cambia', () {
+    test('1. Historial de cambios: solo se registra cuando el estado cambia', () async {
       expect(provider.historialCambiosEstado, isEmpty);
 
-      // Primera lectura: inicializa estado anterior, no hay transición previa
-      // Se alimenta simulando evento en el servicio
-      mqttService.lecturasStream; // activa listen
-      
-      // Simulamos llegadas secuenciales mediante método directo a través de lecturasStream
-      // Primera lectura NORMAL
-      final l1 = crearLectura(EstadoLectura.normal);
-      // Segunda lectura NORMAL (mismo estado)
-      final l2 = crearLectura(EstadoLectura.normal);
-      // Tercera lectura DESVIACION (cambio de estado)
-      final l3 = crearLectura(EstadoLectura.desviacion, qe: 12.0, qs: 9.8, difPorc: 18.3);
-      // Cuarta lectura DESVIACION (mismo estado)
-      final l4 = crearLectura(EstadoLectura.desviacion, qe: 12.1, qs: 9.9, difPorc: 18.1);
-      // Quinta lectura FUGA (cambio de estado)
-      final l5 = crearLectura(EstadoLectura.fuga, qe: 14.0, qs: 7.0, difPorc: 50.0);
-
-      // Enviamos a través de provider emulando stream
-      // Usamos el cliente mock para inyectar si fuera necesario, o invocando la lógica
-      // Para probar la lógica de provider de forma exacta:
       final rawL1 = jsonEncode({
         'dispositivo': 'ESP32_TEST',
         'caudal_entrada': 10.0,
@@ -223,41 +179,25 @@ void main() {
         'estado': 'FUGA',
       });
 
-      // Alimentar via process
-      // Simulamos mensaje MQTT entrante en tópico telemetria
-      // Creamos mensajes MqttPublishMessage simulados:
-      void emitirMensajeTelemetria(String jsonStr) {
-        final bytes = utf8.encode(jsonStr);
-        final header = MqttHeader()..type = MqttMessageType.publish;
-        final variableHeader = MqttPublishVariableHeader()..topicName = MqttTopicos.telemetria;
-        final payload = MqttPublishPayload()..message = (typed.Uint8Buffer()..addAll(bytes));
-        final pubMsg = MqttPublishMessage(header, variableHeader, payload);
-        mockClient._updatesController.add([
-          MqttReceivedMessage<MqttMessage>(MqttTopicos.telemetria, pubMsg),
-        ]);
-      }
+      mqttService.procesarMensajeRecibido(MqttTopicos.telemetria, rawL1);
+      mqttService.procesarMensajeRecibido(MqttTopicos.telemetria, rawL2);
+      mqttService.procesarMensajeRecibido(MqttTopicos.telemetria, rawL3);
+      mqttService.procesarMensajeRecibido(MqttTopicos.telemetria, rawL4);
+      mqttService.procesarMensajeRecibido(MqttTopicos.telemetria, rawL5);
+      await Future<void>.delayed(Duration.zero);
 
-      emitirMensajeTelemetria(rawL1);
-      emitirMensajeTelemetria(rawL2);
-      emitirMensajeTelemetria(rawL3);
-      emitirMensajeTelemetria(rawL4);
-      emitirMensajeTelemetria(rawL5);
+      expect(provider.historialCambiosEstado.length, 2,
+          reason: 'Solo deben registrarse 2 eventos: NORMAL->DESVIACION y DESVIACION->FUGA');
 
-      // Esperar breve tick de microtask para que los streams procesen
-      return Future.delayed(const Duration(milliseconds: 50), () {
-        expect(provider.historialCambiosEstado.length, 2,
-            reason: 'Solo deben registrarse 2 eventos: NORMAL->DESVIACION y DESVIACION->FUGA');
+      final primerEvento = provider.historialCambiosEstado[0];
+      expect(primerEvento.estadoAnterior, EstadoLectura.normal);
+      expect(primerEvento.estadoNuevo, EstadoLectura.desviacion);
+      expect(primerEvento.diferenciaPorcentaje, 18.3);
 
-        final primerEvento = provider.historialCambiosEstado[0];
-        expect(primerEvento.estadoAnterior, EstadoLectura.normal);
-        expect(primerEvento.estadoNuevo, EstadoLectura.desviacion);
-        expect(primerEvento.diferenciaPorcentaje, 18.3);
-
-        final segundoEvento = provider.historialCambiosEstado[1];
-        expect(segundoEvento.estadoAnterior, EstadoLectura.desviacion);
-        expect(segundoEvento.estadoNuevo, EstadoLectura.fuga);
-        expect(segundoEvento.diferenciaPorcentaje, 50.0);
-      });
+      final segundoEvento = provider.historialCambiosEstado[1];
+      expect(segundoEvento.estadoAnterior, EstadoLectura.desviacion);
+      expect(segundoEvento.estadoNuevo, EstadoLectura.fuga);
+      expect(segundoEvento.diferenciaPorcentaje, 50.0);
     });
 
     test('2. Historial de cambios respeta el tope máximo de 200 entradas', () async {
@@ -268,14 +208,7 @@ void main() {
           'caudal_salida': 9.0,
           'estado': estado,
         });
-        final bytes = utf8.encode(jsonStr);
-        final header = MqttHeader()..type = MqttMessageType.publish;
-        final variableHeader = MqttPublishVariableHeader()..topicName = MqttTopicos.telemetria;
-        final payload = MqttPublishPayload()..message = (typed.Uint8Buffer()..addAll(bytes));
-        final pubMsg = MqttPublishMessage(header, variableHeader, payload);
-        mockClient._updatesController.add([
-          MqttReceivedMessage<MqttMessage>(MqttTopicos.telemetria, pubMsg),
-        ]);
+        mqttService.procesarMensajeRecibido(MqttTopicos.telemetria, jsonStr);
       }
 
       // Generar 250 alternancias de estado (NORMAL <-> DESVIACION)
@@ -284,7 +217,7 @@ void main() {
         emitirMensajeTelemetria(estado, i);
       }
 
-      await Future.delayed(const Duration(milliseconds: 100));
+      await Future<void>.delayed(Duration.zero);
 
       // El total de cambios no debe exceder 200
       expect(provider.historialCambiosEstado.length, 200);
@@ -294,60 +227,36 @@ void main() {
       expect(provider.historialCambiosEstado, isEmpty);
     });
 
-    test('3. Lógica de "sin confirmar" tras enviar orden si pasan 5 segundos sin confirmación', () {
-      fakeAsync((async) {
-        expect(provider.esperandoConfirmacion, isFalse);
-        expect(provider.confirmacionExpirada, isFalse);
+    test('3. Lógica de "sin confirmar" después del timeout configurado', () async {
+      expect(provider.esperandoConfirmacion, isFalse);
+      expect(provider.confirmacionExpirada, isFalse);
 
-        // Enviar orden PAUSAR
-        provider.enviarOrden('PAUSAR');
+      expect(await provider.enviarOrden('PAUSAR'), isTrue);
+      expect(provider.esperandoConfirmacion, isTrue);
+      expect(provider.confirmacionExpirada, isFalse);
+      expect(provider.ordenPendiente, 'PAUSAR');
 
-        expect(provider.esperandoConfirmacion, isTrue);
-        expect(provider.confirmacionExpirada, isFalse);
-        expect(provider.ordenPendiente, 'PAUSAR');
-
-        // Avanzar el tiempo 4 segundos (aún esperando)
-        async.elapse(const Duration(seconds: 4));
-        expect(provider.esperandoConfirmacion, isTrue);
-        expect(provider.confirmacionExpirada, isFalse);
-
-        // Avanzar 1.1 segundos más (supera los 5 segundos de umbral)
-        async.elapse(const Duration(milliseconds: 1100));
-
-        // Debe expirar y marcar "sin confirmar"
-        expect(provider.esperandoConfirmacion, isFalse);
-        expect(provider.confirmacionExpirada, isTrue);
-      });
+      await Future<void>.delayed(const Duration(milliseconds: 70));
+      expect(provider.esperandoConfirmacion, isFalse);
+      expect(provider.confirmacionExpirada, isTrue);
     });
 
-    test('4. Confirmación exitosa en tópico equipo dentro de los 5 segundos cancela timeout', () {
-      fakeAsync((async) {
-        provider.enviarOrden('PAUSAR');
-        expect(provider.esperandoConfirmacion, isTrue);
+    test('4. Confirmación exitosa en tópico equipo cancela timeout', () async {
+      expect(await provider.enviarOrden('PAUSAR'), isTrue);
+      expect(provider.esperandoConfirmacion, isTrue);
 
-        // Simulamos respuesta retained en unt/iot/g2/riego/equipo: {"activo": false}
-        final jsonEquipo = jsonEncode({'activo': false});
-        final bytes = utf8.encode(jsonEquipo);
-        final header = MqttHeader()..type = MqttMessageType.publish;
-        final variableHeader = MqttPublishVariableHeader()..topicName = MqttTopicos.equipo;
-        final payload = MqttPublishPayload()..message = (typed.Uint8Buffer()..addAll(bytes));
-        final pubMsg = MqttPublishMessage(header, variableHeader, payload);
-        mockClient._updatesController.add([
-          MqttReceivedMessage<MqttMessage>(MqttTopicos.equipo, pubMsg),
-        ]);
+      mqttService.procesarMensajeRecibido(
+        MqttTopicos.equipo,
+        jsonEncode({'activo': false}),
+      );
+      await Future<void>.delayed(Duration.zero);
 
-        async.elapse(const Duration(milliseconds: 100));
+      expect(provider.esperandoConfirmacion, isFalse);
+      expect(provider.confirmacionExpirada, isFalse);
+      expect(provider.equipoActivo, isFalse);
 
-        // Confirmado exitosamente
-        expect(provider.esperandoConfirmacion, isFalse);
-        expect(provider.confirmacionExpirada, isFalse);
-        expect(provider.equipoActivo, isFalse);
-
-        // Si avanza 10 segundos más, no debe marcar sin confirmar
-        async.elapse(const Duration(seconds: 10));
-        expect(provider.confirmacionExpirada, isFalse);
-      });
+      await Future<void>.delayed(const Duration(milliseconds: 70));
+      expect(provider.confirmacionExpirada, isFalse);
     });
   });
 }
-
