@@ -7,26 +7,29 @@ import '../models/conexion_estado.dart';
 import '../models/estado_lectura.dart';
 import '../models/lectura.dart';
 import '../services/mqtt_service.dart';
+import '../utils/validador_conexion.dart';
 
-/// Provider principal de la aplicación.
-/// Administra el estado de conexión MQTT, recepción de telemetría,
-/// ventana de 120 s para gráficos, historial de cambios de estado (máx 200),
-/// estado del equipo y lógica de confirmación (5 s), y Modo DEMO desde CSV.
+/// Provider principal de la aplicación Aqualerta.
+/// Administra el estado de conexión MQTT (con soporte TLS opcional),
+/// recepción de telemetría con validación de rangos, historial de cambios de estado,
+/// estado del equipo y lógica de confirmación, conteo de mensajes descartados y Modo DEMO.
 class TelemetriaProvider with ChangeNotifier {
   final MqttService _mqttService;
-  final Duration _duracionTimeoutConfirmacion;
 
-  // Parámetros de conexión (sin valores por defecto en host/usuario/password)
+  // Parámetros de conexión (sin credenciales por defecto)
   String _host = '';
   int _puerto = 1883;
   String _usuario = '';
-  String _password = ''; // Reside estrictamente en memoria RAM
+  String _password = ''; // Reside estrictamente en memoria RAM volátil
+  bool _usarTls = false;
 
   ConexionEstado _estadoConexion = ConexionEstado.desconectado;
   String? _mensajeError;
 
   Lectura? _ultimaLectura;
   String? _ultimoMensajeBruto;
+  int _mensajesDescartados = 0;
+
   final List<Lectura> _historialLecturas = [];
   final List<CambioEstadoEvento> _historialCambiosEstado = [];
 
@@ -51,13 +54,11 @@ class TelemetriaProvider with ChangeNotifier {
   StreamSubscription<ConexionEstado>? _estadoSub;
   StreamSubscription<bool>? _equipoSub;
   StreamSubscription<String>? _brutosSub;
+  StreamSubscription<int>? _descartadosSub;
   Timer? _temporizadorVigilancia;
 
-  TelemetriaProvider({
-    MqttService? mqttService,
-    Duration duracionTimeoutConfirmacion = const Duration(seconds: 5),
-  })  : _mqttService = mqttService ?? MqttService(),
-        _duracionTimeoutConfirmacion = duracionTimeoutConfirmacion {
+  TelemetriaProvider({MqttService? mqttService})
+      : _mqttService = mqttService ?? MqttService() {
     _inicializarSubscripciones();
     _iniciarTemporizadorVigilancia();
   }
@@ -67,6 +68,7 @@ class TelemetriaProvider with ChangeNotifier {
   String? get mensajeError => _mensajeError;
   Lectura? get ultimaLectura => _ultimaLectura;
   String? get ultimoMensajeBruto => _ultimoMensajeBruto;
+  int get mensajesDescartados => _mensajesDescartados;
   List<Lectura> get historialLecturas => List.unmodifiable(_historialLecturas);
   List<CambioEstadoEvento> get historialCambiosEstado =>
       List.unmodifiable(_historialCambiosEstado);
@@ -75,6 +77,7 @@ class TelemetriaProvider with ChangeNotifier {
   String get host => _host;
   int get puerto => _puerto;
   String get usuario => _usuario;
+  bool get usarTls => _usarTls;
 
   bool? get equipoActivo => _equipoActivo;
   bool get esperandoConfirmacion => _esperandoConfirmacion;
@@ -105,6 +108,23 @@ class TelemetriaProvider with ChangeNotifier {
       _ultimoMensajeBruto = bruto;
       notifyListeners();
     });
+
+    _descartadosSub = _mqttService.mensajesDescartadosStream.listen((total) {
+      _mensajesDescartados = total;
+      notifyListeners();
+    });
+  }
+
+  /// Configura el uso de conexión cifrada TLS y adapta el puerto sugerido.
+  void setUsarTls(bool activo) {
+    if (_usarTls == activo) return;
+    _usarTls = activo;
+    if (activo && _puerto == 1883) {
+      _puerto = 8883;
+    } else if (!activo && _puerto == 8883) {
+      _puerto = 1883;
+    }
+    notifyListeners();
   }
 
   void _procesarNuevaLectura(Lectura lectura, [String? mensajeBruto]) {
@@ -176,8 +196,7 @@ class TelemetriaProvider with ChangeNotifier {
   }
 
   /// Publica una orden ("PAUSAR" o "REANUDAR") en unt/iot/g2/riego/comando (QoS 1).
-  /// Inicia un temporizador de 5 segundos: si no llega confirmación de
-  /// unt/iot/g2/riego/equipo en 5 s, muestra "sin confirmar".
+  /// Inicia un temporizador de 5 segundos: si no llega confirmación en 5 s, muestra "sin confirmar".
   Future<bool> enviarOrden(String orden) async {
     if (_modoDemoActivo) {
       return false; // En modo demo los controles están deshabilitados
@@ -189,9 +208,8 @@ class TelemetriaProvider with ChangeNotifier {
     _confirmacionExpirada = false;
     notifyListeners();
 
-    // Cancelar temporizador previo si existiera
     _temporizadorConfirmacion?.cancel();
-    _temporizadorConfirmacion = Timer(_duracionTimeoutConfirmacion, () {
+    _temporizadorConfirmacion = Timer(const Duration(seconds: 5), () {
       if (_esperandoConfirmacion) {
         _esperandoConfirmacion = false;
         _confirmacionExpirada = true; // "sin confirmar"
@@ -249,7 +267,6 @@ class TelemetriaProvider with ChangeNotifier {
           .where((l) => l.isNotEmpty)
           .toList();
 
-      // Descartar encabezado
       if (lineas.isNotEmpty && lineas.first.startsWith('dispositivo')) {
         lineas.removeAt(0);
       }
@@ -259,7 +276,6 @@ class TelemetriaProvider with ChangeNotifier {
 
       if (_demoLineasCsv.isEmpty) return;
 
-      // Emitir 1 lectura por segundo en bucle
       _demoTimer = Timer.periodic(const Duration(seconds: 1), (_) {
         if (!_modoDemoActivo || _demoLineasCsv.isEmpty) return;
 
@@ -280,13 +296,16 @@ class TelemetriaProvider with ChangeNotifier {
             'rssi': partes.length > 8 ? int.tryParse(partes[8]) : null,
           };
 
-          final lectura = Lectura.fromJson(payloadSimulado);
-          _procesarNuevaLectura(lectura, jsonEncode(payloadSimulado));
+          final lectura = Lectura.tryFromJson(payloadSimulado);
+          if (lectura != null) {
+            _procesarNuevaLectura(lectura, jsonEncode(payloadSimulado));
+          } else {
+            _mensajesDescartados++;
+            notifyListeners();
+          }
         }
       });
-    } catch (_) {
-      // Si falla carga de assets demo
-    }
+    } catch (_) {}
   }
 
   /// Temporizador de vigilancia de 4 segundos ("sin datos").
@@ -295,7 +314,6 @@ class TelemetriaProvider with ChangeNotifier {
     _temporizadorVigilancia = Timer.periodic(const Duration(seconds: 1), (_) {
       final ahora = DateTime.now();
 
-      // Limpieza continua de datos del gráfico
       if (_historialLecturas.isNotEmpty) {
         final antes = _historialLecturas.length;
         _historialLecturas.removeWhere(
@@ -306,7 +324,7 @@ class TelemetriaProvider with ChangeNotifier {
         }
       }
 
-      if (_modoDemoActivo) return; // En modo demo el timer de demo mantiene la frescura
+      if (_modoDemoActivo) return;
 
       if (_ultimaLectura == null) {
         if (_hayDatosRecientes) {
@@ -326,35 +344,58 @@ class TelemetriaProvider with ChangeNotifier {
     });
   }
 
-  /// Conecta al broker MQTT EMQX.
+  /// Conecta al broker MQTT validando previamente las entradas del usuario.
   Future<bool> conectar({
     required String host,
     int puerto = 1883,
     String? usuario,
     String? password,
+    bool? usarTls,
   }) async {
     if (_modoDemoActivo) {
       await setModoDemo(false);
     }
 
-    _host = host;
+    // Validación rigurosa de entradas
+    final errorHost = ValidadorConexion.validarHost(host);
+    if (errorHost != null) {
+      _estadoConexion = ConexionEstado.error;
+      _mensajeError = errorHost;
+      notifyListeners();
+      return false;
+    }
+
+    final errorPuerto = ValidadorConexion.validarPuerto(puerto.toString());
+    if (errorPuerto != null) {
+      _estadoConexion = ConexionEstado.error;
+      _mensajeError = errorPuerto;
+      notifyListeners();
+      return false;
+    }
+
+    _host = host.trim();
     _puerto = puerto;
-    _usuario = usuario ?? '';
+    _usuario = ValidadorConexion.limpiarUsuario(usuario);
     _password = password ?? '';
+    if (usarTls != null) {
+      _usarTls = usarTls;
+    }
 
     final exito = await _mqttService.conectar(
       host: _host,
       puerto: _puerto,
       usuario: _usuario.isNotEmpty ? _usuario : null,
       password: _password.isNotEmpty ? _password : null,
+      usarTls: _usarTls,
     );
 
     return exito;
   }
 
-  /// Desconecta la sesión MQTT y restablece banderas temporales.
+  /// Desconecta la sesión MQTT y borra la contraseña de la memoria.
   Future<void> desconectar() async {
     await _mqttService.desconectar();
+    _password = ''; // Borrado riguroso de la contraseña en RAM al desconectar
     _hayDatosRecientes = false;
     _alertaFugaActiva = false;
     _estadoAnterior = null;
@@ -372,6 +413,7 @@ class TelemetriaProvider with ChangeNotifier {
 
   @override
   void dispose() {
+    _password = '';
     _demoTimer?.cancel();
     _temporizadorConfirmacion?.cancel();
     _temporizadorVigilancia?.cancel();
@@ -379,6 +421,7 @@ class TelemetriaProvider with ChangeNotifier {
     _estadoSub?.cancel();
     _equipoSub?.cancel();
     _brutosSub?.cancel();
+    _descartadosSub?.cancel();
     _mqttService.dispose();
     super.dispose();
   }

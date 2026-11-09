@@ -1,14 +1,13 @@
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fugas_g2/constants/mqtt_topicos.dart';
-import 'package:fugas_g2/models/conexion_estado.dart';
 import 'package:fugas_g2/models/estado_lectura.dart';
 import 'package:fugas_g2/providers/telemetria_provider.dart';
 import 'package:fugas_g2/services/mqtt_service.dart';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:typed_data/typed_data.dart' as typed;
 
-/// Registro de publicaciones para pruebas con cliente MQTT simulado.
+/// Registro de publicaciones capturadas en el cliente simulado.
 class PublicacionRegistro {
   final String topico;
   final MqttQos qos;
@@ -24,10 +23,13 @@ class PublicacionRegistro {
 }
 
 /// Cliente MQTT simulado que no requiere conexión de red ni broker EMQX real.
+/// No utiliza clases internas complejas de la librería mqtt_client.
 class MockMqttClientWrapper implements IMqttClientWrapper {
   final List<PublicacionRegistro> publicaciones = [];
-
   bool _conectado = false;
+
+  @override
+  Stream<List<MqttReceivedMessage<MqttMessage>>>? get updates => null;
 
   @override
   bool get estaConectado => _conectado;
@@ -39,7 +41,7 @@ class MockMqttClientWrapper implements IMqttClientWrapper {
     required String clientId,
     String? usuario,
     String? password,
-    void Function(String topico, String payload)? onMessage,
+    bool usarTls = false,
     void Function()? onConnected,
     void Function()? onDisconnected,
     void Function()? onAutoReconnected,
@@ -98,7 +100,8 @@ void main() {
       expect(pub.qos, MqttQos.atLeastOnce); // QoS 1
       expect(pub.retain, isFalse);
 
-      expect(pub.payloadStr, '{"orden":"PAUSAR"}');
+      final decoded = jsonDecode(pub.payloadStr);
+      expect(decoded, {'orden': 'PAUSAR'});
     });
 
     test('Publicar orden REANUDAR genera el JSON y el tópico correctos con QoS 1', () async {
@@ -112,7 +115,8 @@ void main() {
       expect(pub.qos, MqttQos.atLeastOnce); // QoS 1
       expect(pub.retain, isFalse);
 
-      expect(pub.payloadStr, '{"orden":"REANUDAR"}');
+      final decoded = jsonDecode(pub.payloadStr);
+      expect(decoded, {'orden': 'REANUDAR'});
     });
 
     test('Publicar orden no permitida lanza ArgumentError', () async {
@@ -131,10 +135,7 @@ void main() {
     setUp(() async {
       mockClient = MockMqttClientWrapper();
       mqttService = MqttService(clientWrapper: mockClient);
-      provider = TelemetriaProvider(
-        mqttService: mqttService,
-        duracionTimeoutConfirmacion: const Duration(milliseconds: 50),
-      );
+      provider = TelemetriaProvider(mqttService: mqttService);
       await provider.conectar(host: '127.0.0.1', puerto: 1883);
     });
 
@@ -145,46 +146,67 @@ void main() {
     test('1. Historial de cambios: solo se registra cuando el estado cambia', () async {
       expect(provider.historialCambiosEstado, isEmpty);
 
-      final rawL1 = jsonEncode({
-        'dispositivo': 'ESP32_TEST',
-        'caudal_entrada': 10.0,
-        'caudal_salida': 9.8,
-        'estado': 'NORMAL',
-      });
-      final rawL2 = jsonEncode({
-        'dispositivo': 'ESP32_TEST',
-        'caudal_entrada': 10.2,
-        'caudal_salida': 9.9,
-        'estado': 'NORMAL',
-      });
-      final rawL3 = jsonEncode({
-        'dispositivo': 'ESP32_TEST',
-        'caudal_entrada': 12.0,
-        'caudal_salida': 9.8,
-        'diferencia_porcentaje': 18.3,
-        'estado': 'DESVIACION',
-      });
-      final rawL4 = jsonEncode({
-        'dispositivo': 'ESP32_TEST',
-        'caudal_entrada': 12.1,
-        'caudal_salida': 9.9,
-        'diferencia_porcentaje': 18.1,
-        'estado': 'DESVIACION',
-      });
-      final rawL5 = jsonEncode({
-        'dispositivo': 'ESP32_TEST',
-        'caudal_entrada': 14.0,
-        'caudal_salida': 7.0,
-        'diferencia_porcentaje': 50.0,
-        'estado': 'FUGA',
-      });
+      // Usamos el método público del servicio sin clases internas de mqtt_client
+      mqttService.procesarMensajeRecibido(
+        MqttTopicos.telemetria,
+        jsonEncode({
+          'dispositivo': 'ESP32',
+          'caudal_entrada': 10.0,
+          'caudal_salida': 9.8,
+          'diferencia_porcentaje': 2.0,
+          'estado': 'NORMAL',
+        }),
+      );
 
-      mqttService.procesarMensajeRecibido(MqttTopicos.telemetria, rawL1);
-      mqttService.procesarMensajeRecibido(MqttTopicos.telemetria, rawL2);
-      mqttService.procesarMensajeRecibido(MqttTopicos.telemetria, rawL3);
-      mqttService.procesarMensajeRecibido(MqttTopicos.telemetria, rawL4);
-      mqttService.procesarMensajeRecibido(MqttTopicos.telemetria, rawL5);
-      await Future<void>.delayed(Duration.zero);
+      // Mismo estado NORMAL -> no debe agregar historial
+      mqttService.procesarMensajeRecibido(
+        MqttTopicos.telemetria,
+        jsonEncode({
+          'dispositivo': 'ESP32',
+          'caudal_entrada': 10.2,
+          'caudal_salida': 9.9,
+          'diferencia_porcentaje': 2.1,
+          'estado': 'NORMAL',
+        }),
+      );
+
+      // Cambio a DESVIACION -> agrega 1er evento
+      mqttService.procesarMensajeRecibido(
+        MqttTopicos.telemetria,
+        jsonEncode({
+          'dispositivo': 'ESP32',
+          'caudal_entrada': 12.0,
+          'caudal_salida': 9.8,
+          'diferencia_porcentaje': 18.3,
+          'estado': 'DESVIACION',
+        }),
+      );
+
+      // Mismo estado DESVIACION -> no debe agregar historial
+      mqttService.procesarMensajeRecibido(
+        MqttTopicos.telemetria,
+        jsonEncode({
+          'dispositivo': 'ESP32',
+          'caudal_entrada': 12.1,
+          'caudal_salida': 9.9,
+          'diferencia_porcentaje': 18.1,
+          'estado': 'DESVIACION',
+        }),
+      );
+
+      // Cambio a FUGA -> agrega 2do evento
+      mqttService.procesarMensajeRecibido(
+        MqttTopicos.telemetria,
+        jsonEncode({
+          'dispositivo': 'ESP32',
+          'caudal_entrada': 14.0,
+          'caudal_salida': 7.0,
+          'diferencia_porcentaje': 50.0,
+          'estado': 'FUGA',
+        }),
+      );
+
+      await Future.delayed(const Duration(milliseconds: 50));
 
       expect(provider.historialCambiosEstado.length, 2,
           reason: 'Solo deben registrarse 2 eventos: NORMAL->DESVIACION y DESVIACION->FUGA');
@@ -201,62 +223,72 @@ void main() {
     });
 
     test('2. Historial de cambios respeta el tope máximo de 200 entradas', () async {
-      void emitirMensajeTelemetria(String estado, int indice) {
-        final jsonStr = jsonEncode({
-          'dispositivo': 'ESP32_TEST',
-          'caudal_entrada': 10.0 + indice,
-          'caudal_salida': 9.0,
-          'estado': estado,
-        });
-        mqttService.procesarMensajeRecibido(MqttTopicos.telemetria, jsonStr);
-      }
-
-      // Generar 250 alternancias de estado (NORMAL <-> DESVIACION)
       for (int i = 0; i < 250; i++) {
         final estado = i % 2 == 0 ? 'NORMAL' : 'DESVIACION';
-        emitirMensajeTelemetria(estado, i);
+        mqttService.procesarMensajeRecibido(
+          MqttTopicos.telemetria,
+          jsonEncode({
+            'dispositivo': 'ESP32',
+            'caudal_entrada': 10.0 + (i % 5),
+            'caudal_salida': 9.0,
+            'diferencia_porcentaje': i % 2 == 0 ? 5.0 : 20.0,
+            'estado': estado,
+          }),
+        );
       }
 
-      await Future<void>.delayed(Duration.zero);
+      await Future.delayed(const Duration(milliseconds: 100));
 
-      // El total de cambios no debe exceder 200
       expect(provider.historialCambiosEstado.length, 200);
 
-      // El botón de limpiar vacía el historial
       provider.limpiarHistorialCambios();
       expect(provider.historialCambiosEstado, isEmpty);
     });
 
-    test('3. Lógica de "sin confirmar" después del timeout configurado', () async {
-      expect(provider.esperandoConfirmacion, isFalse);
-      expect(provider.confirmacionExpirada, isFalse);
+    test('3. Lógica de "sin confirmar" tras enviar orden si pasan 5 segundos sin confirmación', () {
+      fakeAsync((async) {
+        expect(provider.esperandoConfirmacion, isFalse);
+        expect(provider.confirmacionExpirada, isFalse);
 
-      expect(await provider.enviarOrden('PAUSAR'), isTrue);
-      expect(provider.esperandoConfirmacion, isTrue);
-      expect(provider.confirmacionExpirada, isFalse);
-      expect(provider.ordenPendiente, 'PAUSAR');
+        provider.enviarOrden('PAUSAR');
 
-      await Future<void>.delayed(const Duration(milliseconds: 70));
-      expect(provider.esperandoConfirmacion, isFalse);
-      expect(provider.confirmacionExpirada, isTrue);
+        expect(provider.esperandoConfirmacion, isTrue);
+        expect(provider.confirmacionExpirada, isFalse);
+        expect(provider.ordenPendiente, 'PAUSAR');
+
+        // Avanzar el tiempo 4 segundos (aún esperando)
+        async.elapse(const Duration(seconds: 4));
+        expect(provider.esperandoConfirmacion, isTrue);
+        expect(provider.confirmacionExpirada, isFalse);
+
+        // Superar los 5 segundos de umbral
+        async.elapse(const Duration(milliseconds: 1100));
+
+        expect(provider.esperandoConfirmacion, isFalse);
+        expect(provider.confirmacionExpirada, isTrue);
+      });
     });
 
-    test('4. Confirmación exitosa en tópico equipo cancela timeout', () async {
-      expect(await provider.enviarOrden('PAUSAR'), isTrue);
-      expect(provider.esperandoConfirmacion, isTrue);
+    test('4. Confirmación exitosa en tópico equipo dentro de los 5 segundos cancela timeout', () {
+      fakeAsync((async) {
+        provider.enviarOrden('PAUSAR');
+        expect(provider.esperandoConfirmacion, isTrue);
 
-      mqttService.procesarMensajeRecibido(
-        MqttTopicos.equipo,
-        jsonEncode({'activo': false}),
-      );
-      await Future<void>.delayed(Duration.zero);
+        // Recepción pública directa sin clases internas de mqtt_client
+        mqttService.procesarMensajeRecibido(
+          MqttTopicos.equipo,
+          jsonEncode({'activo': false}),
+        );
 
-      expect(provider.esperandoConfirmacion, isFalse);
-      expect(provider.confirmacionExpirada, isFalse);
-      expect(provider.equipoActivo, isFalse);
+        async.elapse(const Duration(milliseconds: 100));
 
-      await Future<void>.delayed(const Duration(milliseconds: 70));
-      expect(provider.confirmacionExpirada, isFalse);
+        expect(provider.esperandoConfirmacion, isFalse);
+        expect(provider.confirmacionExpirada, isFalse);
+        expect(provider.equipoActivo, isFalse);
+
+        async.elapse(const Duration(seconds: 10));
+        expect(provider.confirmacionExpirada, isFalse);
+      });
     });
   });
 }

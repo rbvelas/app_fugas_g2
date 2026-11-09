@@ -3,11 +3,11 @@ import 'package:fugas_g2/models/estado_lectura.dart';
 import 'package:fugas_g2/models/lectura.dart';
 
 void main() {
-  group('Pruebas unitarias de parseo de Lectura', () {
+  group('Pruebas unitarias de parseo y validación de rangos de Lectura', () {
     test('1. Mensaje válido completo con todos los campos de telemetría', () {
       const jsonStr = '''
       {
-        "dispositivo": "ESP32_G2_RIEDO",
+        "dispositivo": "ESP32_RIEGO",
         "caudal_entrada": 12.5,
         "caudal_salida": 10.0,
         "diferencia_l_min": 2.5,
@@ -22,7 +22,7 @@ void main() {
       final lectura = Lectura.fromRawJson(jsonStr);
 
       expect(lectura, isNotNull);
-      expect(lectura!.dispositivo, 'ESP32_G2_RIEDO');
+      expect(lectura!.dispositivo, 'ESP32_RIEGO');
       expect(lectura.caudalEntrada, 12.5);
       expect(lectura.caudalSalida, 10.0);
       expect(lectura.diferenciaLMin, 2.5);
@@ -48,14 +48,14 @@ void main() {
 
       final lectura = Lectura.fromRawJson(mensajeInicio);
 
-      expect(lectura, isNull, reason: 'El mensaje de inicio del ESP32 no es telemetría y debe ignorarse');
+      expect(lectura, isNull);
       expect(Lectura.tryFromJson(const {'mensaje': 'ESP32 conectado'}), isNull);
     });
 
     test('4. Mensaje sin caudal_entrada es ignorado (retorna null o FormatException en fromJson)', () {
       const payloadSinCaudalEntrada = '''
       {
-        "dispositivo": "ESP32_G2",
+        "dispositivo": "ESP32",
         "caudal_salida": 5.0,
         "estado": "NORMAL",
         "rssi": -70
@@ -65,30 +65,146 @@ void main() {
       expect(Lectura.fromRawJson(payloadSinCaudalEntrada), isNull);
       expect(
         () => Lectura.fromJson(const {
-          'dispositivo': 'ESP32_G2',
+          'dispositivo': 'ESP32',
           'caudal_salida': 5.0,
         }),
         throwsA(isA<FormatException>()),
       );
     });
 
-    test('5. Tolerancia a campos opcionales ausentes con valores por defecto seguros', () {
-      const jsonMinimo = '{"caudal_entrada": 8.4}';
+    test('5. Validación de rangos: diferencia porcentual negativa pequeña es válida', () {
+      // Un sensor de salida a veces cuenta 1 pulso más: diferencia negativa pequeña válida
+      const jsonDifNegativa = '''
+      {
+        "caudal_entrada": 10.0,
+        "caudal_salida": 10.25,
+        "diferencia_l_min": -0.25,
+        "diferencia_porcentaje": -2.5,
+        "estado": "NORMAL",
+        "rssi": -65
+      }
+      ''';
 
-      final lectura = Lectura.fromRawJson(jsonMinimo);
-
+      final lectura = Lectura.fromRawJson(jsonDifNegativa);
       expect(lectura, isNotNull);
-      expect(lectura!.caudalEntrada, 8.4);
-      expect(lectura.caudalSalida, 0.0);
-      expect(lectura.diferenciaLMin, 8.4);
-      expect(lectura.volumenEntrada, 0.0);
-      expect(lectura.volumenSalida, 0.0);
-      expect(lectura.estado, EstadoLectura.desconocido);
-      expect(lectura.rssi, isNull);
-      expect(lectura.dispositivo, 'ESP32');
+      expect(lectura!.diferenciaPorcentaje, -2.5);
+      expect(
+        Lectura.validarRangos(
+          caudalEntrada: 10.0,
+          caudalSalida: 10.25,
+          diferenciaPorcentaje: -2.5,
+          estado: EstadoLectura.normal,
+          rssi: -65,
+        ),
+        isTrue,
+      );
     });
 
-    test('6. Mapeo exhaustivo de estados provenientes del firmware', () {
+    test('6. Validación de rangos: diferencia porcentual 150 % es inválida', () {
+      const jsonDifExcesiva = '''
+      {
+        "caudal_entrada": 10.0,
+        "caudal_salida": 0.0,
+        "diferencia_l_min": 10.0,
+        "diferencia_porcentaje": 150.0,
+        "estado": "FUGA",
+        "rssi": -65
+      }
+      ''';
+
+      final lectura = Lectura.fromRawJson(jsonDifExcesiva);
+      expect(lectura, isNull, reason: '150% supera el rango válido de ±100%');
+      expect(
+        Lectura.validarRangos(
+          caudalEntrada: 10.0,
+          caudalSalida: 0.0,
+          diferenciaPorcentaje: 150.0,
+          estado: EstadoLectura.fuga,
+        ),
+        isFalse,
+      );
+    });
+
+    test('7. Validación de rangos: caudales negativos son inválidos', () {
+      const jsonCaudalNegativo = '''
+      {
+        "caudal_entrada": -1.5,
+        "caudal_salida": 10.0,
+        "diferencia_porcentaje": 10.0,
+        "estado": "NORMAL"
+      }
+      ''';
+
+      expect(Lectura.fromRawJson(jsonCaudalNegativo), isNull);
+      expect(
+        Lectura.validarRangos(
+          caudalEntrada: -1.5,
+          caudalSalida: 10.0,
+          diferenciaPorcentaje: 10.0,
+          estado: EstadoLectura.normal,
+        ),
+        isFalse,
+      );
+    });
+
+    test('8. Validación de rangos: estado desconocido es inválido', () {
+      const jsonEstadoInvalido = '''
+      {
+        "caudal_entrada": 10.0,
+        "caudal_salida": 10.0,
+        "diferencia_porcentaje": 0.0,
+        "estado": "ESTADO_INEXISTENTE"
+      }
+      ''';
+
+      expect(Lectura.fromRawJson(jsonEstadoInvalido), isNull);
+      expect(
+        Lectura.validarRangos(
+          caudalEntrada: 10.0,
+          caudalSalida: 10.0,
+          diferenciaPorcentaje: 0.0,
+          estado: EstadoLectura.desconocido,
+        ),
+        isFalse,
+      );
+    });
+
+    test('9. Validación de rangos: RSSI fuera de [-120, 0] es inválido', () {
+      expect(
+        Lectura.validarRangos(
+          caudalEntrada: 10.0,
+          caudalSalida: 10.0,
+          diferenciaPorcentaje: 0.0,
+          estado: EstadoLectura.normal,
+          rssi: 10, // Inválido (> 0)
+        ),
+        isFalse,
+      );
+
+      expect(
+        Lectura.validarRangos(
+          caudalEntrada: 10.0,
+          caudalSalida: 10.0,
+          diferenciaPorcentaje: 0.0,
+          estado: EstadoLectura.normal,
+          rssi: -130, // Inválido (< -120)
+        ),
+        isFalse,
+      );
+
+      expect(
+        Lectura.validarRangos(
+          caudalEntrada: 10.0,
+          caudalSalida: 10.0,
+          diferenciaPorcentaje: 0.0,
+          estado: EstadoLectura.normal,
+          rssi: -65, // Válido
+        ),
+        isTrue,
+      );
+    });
+
+    test('10. Mapeo exhaustivo de estados provenientes del firmware', () {
       expect(EstadoLectura.fromString('NORMAL'), EstadoLectura.normal);
       expect(EstadoLectura.fromString('normal'), EstadoLectura.normal);
       expect(EstadoLectura.fromString('DESVIACION'), EstadoLectura.desviacion);
@@ -101,35 +217,11 @@ void main() {
       expect(EstadoLectura.fromString(null), EstadoLectura.desconocido);
     });
 
-    test('7. Tolerancia a valores numéricos enviados como String', () {
-      const jsonConStrings = '''
-      {
-        "caudal_entrada": "15.75",
-        "caudal_salida": "12.25",
-        "diferencia_l_min": "3.50",
-        "diferencia_porcentaje": "22.2",
-        "volumen_entrada": "50.0",
-        "volumen_salida": "45.0",
-        "estado": "DESVIACION",
-        "rssi": "-75"
-      }
-      ''';
-
-      final lectura = Lectura.fromRawJson(jsonConStrings);
-
-      expect(lectura, isNotNull);
-      expect(lectura!.caudalEntrada, 15.75);
-      expect(lectura.caudalSalida, 12.25);
-      expect(lectura.diferenciaLMin, 3.5);
-      expect(lectura.rssi, -75);
-    });
-
-    test('8. Formateo de fecha y hora en zona horaria de Lima (UTC-5)', () {
-      // 17:30:45 UTC corresponde a 12:30:45 en Lima (UTC-5)
+    test('11. Formateo de fecha y hora única en zona horaria de Lima (UTC-5)', () {
       final tiempoUtc = DateTime.utc(2026, 11, 8, 17, 30, 45);
 
       final lectura = Lectura(
-        dispositivo: 'ESP32_G2',
+        dispositivo: 'ESP32',
         caudalEntrada: 10.0,
         caudalSalida: 9.8,
         diferenciaLMin: 0.2,
@@ -141,7 +233,7 @@ void main() {
       );
 
       expect(lectura.horaLimaFormateada, '12:30:45');
-      expect(lectura.fechaHoraLimaFormateada, contains('08/11/2026 12:30:45 (Lima, UTC-5)'));
+      expect(lectura.fechaHoraLimaFormateada, '08/11/2026 12:30:45 (Lima, UTC-5)');
     });
   });
 }

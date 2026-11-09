@@ -26,11 +26,12 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   image_path: "assets/icon/icon.png"
-  adaptive_icon_background: "#0E7FB8"
-  adaptive_icon_foreground: "assets/icon/icon.png"
+  adaptive_icon_background: "#F2E5C8"
+  adaptive_icon_foreground: "assets/icon/icon_foreground.png"
 
 flutter:
   uses-material-design: true
   assets:
     - assets/demo_telemetria.csv
     - assets/icon/icon.png
+    - assets/icon/icon_foreground.png

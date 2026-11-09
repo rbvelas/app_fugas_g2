@@ -28,6 +28,29 @@ class Lectura {
     this.rssi,
   });
 
+  /// Validador estricto de rangos físicos y de ingeniería:
+  /// - Caudales ≥ 0
+  /// - Diferencia porcentual entre -100.0 % y 100.0 % (valores negativos leves son normales)
+  /// - Estado debe ser NORMAL, DESVIACION, FUGA o SIN_FLUJO (no desconocido)
+  /// - RSSI entre -120 y 0 dBm (si está presente)
+  /// - Volúmenes ≥ 0
+  static bool validarRangos({
+    required double caudalEntrada,
+    required double caudalSalida,
+    required double diferenciaPorcentaje,
+    required EstadoLectura estado,
+    int? rssi,
+    double volumenEntrada = 0.0,
+    double volumenSalida = 0.0,
+  }) {
+    if (caudalEntrada < 0 || caudalSalida < 0) return false;
+    if (diferenciaPorcentaje < -100.0 || diferenciaPorcentaje > 100.0) return false;
+    if (volumenEntrada < 0 || volumenSalida < 0) return false;
+    if (estado == EstadoLectura.desconocido) return false;
+    if (rssi != null && (rssi < -120 || rssi > 0)) return false;
+    return true;
+  }
+
   /// Constructor tolerante a campos ausentes o tipos variados.
   /// Si falta el campo esencial de telemetría `caudal_entrada`, lanza FormatException.
   factory Lectura.fromJson(Map<String, dynamic> json, {DateTime? timestamp}) {
@@ -64,23 +87,38 @@ class Lectura {
     );
   }
 
-  /// Intenta parsear un Map. Retorna null si no es un mensaje de telemetría
-  /// válido (por ejemplo, si es {"mensaje":"ESP32 conectado"} o faltan datos clave).
+  /// Parsea un Map y valida estrictamente tipos y rangos.
+  /// Retorna null si faltan campos indispensables o si algún valor está fuera de rango.
   static Lectura? tryFromJson(Map<String, dynamic>? json, {DateTime? timestamp}) {
     if (json == null) return null;
-    // Si contiene 'mensaje' y carece de 'caudal_entrada', es el aviso de inicio del ESP32
+
+    // Mensaje de arranque del ESP32 no es telemetría
     if (!json.containsKey('caudal_entrada') || json['caudal_entrada'] == null) {
       return null;
     }
+
     try {
-      return Lectura.fromJson(json, timestamp: timestamp);
+      final lectura = Lectura.fromJson(json, timestamp: timestamp);
+
+      // Verificación estricta de rangos requerida por el Laboratorio 11
+      final esValido = validarRangos(
+        caudalEntrada: lectura.caudalEntrada,
+        caudalSalida: lectura.caudalSalida,
+        diferenciaPorcentaje: lectura.diferenciaPorcentaje,
+        estado: lectura.estado,
+        rssi: lectura.rssi,
+        volumenEntrada: lectura.volumenEntrada,
+        volumenSalida: lectura.volumenSalida,
+      );
+
+      return esValido ? lectura : null;
     } catch (_) {
       return null;
     }
   }
 
-  /// Parsea de forma segura una cadena JSON cruda.
-  /// Retorna null si la cadena está corrupta, no es JSON, o no corresponde a telemetría.
+  /// Parsea de forma segura una cadena JSON cruda validando tipo y rango.
+  /// Retorna null si la cadena está corrupta, no es JSON, o está fuera de rango.
   static Lectura? fromRawJson(String rawJson, {DateTime? timestamp}) {
     try {
       final decoded = jsonDecode(rawJson);

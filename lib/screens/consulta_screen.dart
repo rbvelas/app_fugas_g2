@@ -7,6 +7,7 @@ import '../widgets/demo_banner.dart';
 
 /// Pantalla de Consulta de la sesión activa:
 /// - Historial en memoria de cambios de estado (máximo 200 entradas).
+/// - Contador de mensajes inválidos descartados por seguridad.
 /// - Último mensaje JSON recibido en bruto.
 /// - Botón para limpiar historial.
 /// - Nota sobre almacenamiento volátil y consulta MySQL [POR COMPLETAR].
@@ -19,6 +20,7 @@ class ConsultaScreen extends StatelessWidget {
     final provider = context.watch<TelemetriaProvider>();
     final historial = provider.historialCambiosEstado;
     final ultimoBruto = provider.ultimoMensajeBruto;
+    final descartados = provider.mensajesDescartados;
 
     return Scaffold(
       appBar: AppBar(
@@ -30,7 +32,7 @@ class ConsultaScreen extends StatelessWidget {
               style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
             ),
             Text(
-              'Historial volátil de la sesión',
+              'Historial volátil y auditoría de mensajes',
               style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
             ),
           ],
@@ -63,12 +65,17 @@ class ConsultaScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 1. Tarjeta con el último mensaje recibido en bruto
+                  // 1. Tarjeta de mensajes descartados por validación de seguridad
+                  _buildTarjetaDescartados(theme, descartados),
+
+                  const SizedBox(height: 16),
+
+                  // 2. Tarjeta con el último mensaje recibido en bruto
                   _buildUltimoMensajeBrutoCard(context, theme, ultimoBruto),
 
                   const SizedBox(height: 20),
 
-                  // 2. Historial de cambios de estado
+                  // 3. Historial de cambios de estado
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -100,12 +107,80 @@ class ConsultaScreen extends StatelessWidget {
 
                   const SizedBox(height: 24),
 
-                  // 3. Aclaración obligatoria sobre memoria volátil y MySQL [POR COMPLETAR]
+                  // 4. Aclaración obligatoria sobre memoria volátil y MySQL [POR COMPLETAR]
                   _buildAclaracionMemoriaYMysql(theme),
 
                   const SizedBox(height: 16),
                 ],
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTarjetaDescartados(ThemeData theme, int descartados) {
+    final tieneDescartes = descartados > 0;
+    final colorBorde = tieneDescartes ? const Color(0xFFE65100) : const Color(0xFF2E7D32);
+    final colorFondo = tieneDescartes ? const Color(0xFFFFF3E0) : const Color(0xFFE8F5E9);
+    final colorTexto = tieneDescartes ? const Color(0xFFBF360C) : const Color(0xFF1B5E20);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: colorFondo,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colorBorde.withOpacity(0.5), width: 1.2),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: colorBorde.withOpacity(0.15),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              tieneDescartes ? Icons.security_update_warning_rounded : Icons.verified_user_rounded,
+              color: colorBorde,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'VALIDACIÓN DE SEGURIDAD Y TIPOS',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.6,
+                    color: Color(0xFF616161),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Mensajes descartados: $descartados',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: colorTexto,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                const Text(
+                  'Filtra caudales negativos, variaciones fuera de ±100 %, estados ajenos o RSSI fuera de [-120, 0].',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Color(0xFF424242),
+                    height: 1.25,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -231,7 +306,6 @@ class ConsultaScreen extends StatelessWidget {
   }
 
   Widget _buildListaHistorial(List<CambioEstadoEvento> historial) {
-    // Mostrar en orden cronológico inverso (el más reciente arriba)
     final itemsInversos = historial.reversed.toList();
 
     return ListView.separated(
@@ -346,7 +420,7 @@ class ConsultaScreen extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceVariant.withOpacity(0.2),
+        color: theme.colorScheme.surface.withOpacity(0.6),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: theme.colorScheme.outlineVariant.withOpacity(0.4)),
       ),
@@ -413,4 +487,3 @@ class ConsultaScreen extends StatelessWidget {
     );
   }
 }
-

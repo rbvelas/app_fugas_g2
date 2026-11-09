@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/conexion_estado.dart';
 import '../providers/telemetria_provider.dart';
+import '../utils/validador_conexion.dart';
 import '../widgets/demo_banner.dart';
 
 /// Pantalla de configuración y gestión de la conexión MQTT con el broker EMQX.
-/// Incluye interruptor de Modo DEMO (simulación local sin broker).
-/// La contraseña ingresada reside exclusivamente en la memoria RAM y nunca
-/// es persistida en almacenamiento local ni registrada en logs.
+/// Soporta interruptor TLS seguro y modo DEMO local.
+/// La contraseña ingresada reside exclusivamente en la memoria RAM y se borra
+/// automáticamente al desconectar.
 class ConexionScreen extends StatefulWidget {
   const ConexionScreen({super.key});
 
@@ -28,7 +29,6 @@ class _ConexionScreenState extends State<ConexionScreen> {
   void initState() {
     super.initState();
     final provider = context.read<TelemetriaProvider>();
-    // Sin valores por defecto inventados ni marcadores en el texto inicial
     _hostController = TextEditingController(text: provider.host);
     _puertoController = TextEditingController(text: provider.puerto.toString());
     _usuarioController = TextEditingController(text: provider.usuario);
@@ -46,6 +46,8 @@ class _ConexionScreenState extends State<ConexionScreen> {
 
   void _ejecutarAccionConexion(TelemetriaProvider provider) async {
     if (provider.estadoConexion == ConexionEstado.conectado) {
+      // Borrado explícito de contraseña en RAM y desconexión
+      _passwordController.clear();
       await provider.desconectar();
       return;
     }
@@ -55,7 +57,7 @@ class _ConexionScreenState extends State<ConexionScreen> {
     }
 
     final host = _hostController.text.trim();
-    final puerto = int.tryParse(_puertoController.text.trim()) ?? 1883;
+    final puerto = int.tryParse(_puertoController.text.trim()) ?? (provider.usarTls ? 8883 : 1883);
     final usuario = _usuarioController.text.trim();
     final password = _passwordController.text;
 
@@ -64,6 +66,7 @@ class _ConexionScreenState extends State<ConexionScreen> {
       puerto: puerto,
       usuario: usuario.isNotEmpty ? usuario : null,
       password: password.isNotEmpty ? password : null,
+      usarTls: provider.usarTls,
     );
   }
 
@@ -95,60 +98,54 @@ class _ConexionScreenState extends State<ConexionScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // 1. Interruptor Modo DEMO
+                    // 1. Interruptores: Modo DEMO y TLS Seguro
                     _buildSwitchModoDemo(theme, provider),
+                    const SizedBox(height: 10),
+                    _buildSwitchTls(theme, provider, estaConectado || estaConectando),
 
                     const SizedBox(height: 16),
 
                     // 2. Tarjeta visual del estado de la conexión
-                    _buildTarjetaEstado(theme, estado, provider.mensajeError, esDemo),
+                    _buildTarjetaEstado(theme, estado, provider.mensajeError, esDemo, provider.usarTls),
 
                     const SizedBox(height: 20),
 
-                    // 3. Campo Host / IP
+                    // 3. Campo Host / IP (con validación de espacios y esquemas)
                     TextFormField(
                       controller: _hostController,
                       enabled: !estaConectando && !estaConectado && !esDemo,
                       decoration: const InputDecoration(
                         labelText: 'Host o Dirección IP del Broker',
                         hintText: 'IP del equipo donde corre EMQX',
-                        helperText: 'Broker EMQX 5.8.6 (TCP)',
+                        helperText: 'Sin espacios ni esquema (no use http:// ni mqtt://)',
                         prefixIcon: Icon(Icons.dns_rounded),
                         border: OutlineInputBorder(),
                       ),
                       validator: (value) {
                         if (esDemo) return null;
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Ingrese la IP o dirección del broker MQTT';
-                        }
-                        return null;
+                        return ValidadorConexion.validarHost(value);
                       },
                     ),
 
                     const SizedBox(height: 16),
 
-                    // 4. Campo Puerto (por defecto 1883)
+                    // 4. Campo Puerto (1883 o 8883 editable, rango 1-65535)
                     TextFormField(
                       controller: _puertoController,
                       enabled: !estaConectando && !estaConectado && !esDemo,
                       keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         labelText: 'Puerto TCP',
-                        hintText: '1883',
-                        helperText: 'Puerto TCP estándar para MQTT sin TLS (1883)',
-                        prefixIcon: Icon(Icons.numbers_rounded),
-                        border: OutlineInputBorder(),
+                        hintText: provider.usarTls ? '8883' : '1883',
+                        helperText: provider.usarTls
+                            ? 'Puerto estándar TLS seguro (8883)'
+                            : 'Puerto TCP estándar sin cifrar (1883)',
+                        prefixIcon: const Icon(Icons.numbers_rounded),
+                        border: const OutlineInputBorder(),
                       ),
                       validator: (value) {
                         if (esDemo) return null;
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Ingrese el puerto del broker';
-                        }
-                        final p = int.tryParse(value.trim());
-                        if (p == null || p <= 0 || p > 65535) {
-                          return 'Puerto inválido (1 - 65535)';
-                        }
-                        return null;
+                        return ValidadorConexion.validarPuerto(value);
                       },
                     ),
 
@@ -160,7 +157,7 @@ class _ConexionScreenState extends State<ConexionScreen> {
                       enabled: !estaConectando && !estaConectado && !esDemo,
                       decoration: const InputDecoration(
                         labelText: 'Usuario MQTT (Opcional)',
-                        hintText: 'Dejar vacío si no requiere autenticación',
+                        hintText: 'Dejar vacío si el broker no requiere autenticación',
                         prefixIcon: Icon(Icons.person_rounded),
                         border: OutlineInputBorder(),
                       ),
@@ -168,7 +165,7 @@ class _ConexionScreenState extends State<ConexionScreen> {
 
                     const SizedBox(height: 16),
 
-                    // 6. Campo Contraseña (campo oculto, memoria volátil)
+                    // 6. Campo Contraseña (oculto por defecto, solo en memoria)
                     TextFormField(
                       controller: _passwordController,
                       enabled: !estaConectando && !estaConectado && !esDemo,
@@ -176,6 +173,7 @@ class _ConexionScreenState extends State<ConexionScreen> {
                       decoration: InputDecoration(
                         labelText: 'Contraseña (Opcional)',
                         hintText: 'Reside únicamente en memoria RAM',
+                        helperText: 'Se borra de memoria automáticamente al desconectar',
                         prefixIcon: const Icon(Icons.lock_rounded),
                         border: const OutlineInputBorder(),
                         suffixIcon: IconButton(
@@ -296,11 +294,53 @@ class _ConexionScreenState extends State<ConexionScreen> {
     );
   }
 
+  Widget _buildSwitchTls(ThemeData theme, TelemetriaProvider provider, bool bloqueado) {
+    return Container(
+      decoration: BoxDecoration(
+        color: provider.usarTls ? const Color(0xFFE8F5E9) : theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: provider.usarTls ? const Color(0xFF2E7D32) : theme.colorScheme.outlineVariant.withOpacity(0.5),
+          width: provider.usarTls ? 1.5 : 1.0,
+        ),
+      ),
+      child: SwitchListTile(
+        title: const Row(
+          children: [
+            Icon(Icons.lock_outline_rounded, size: 20, color: Color(0xFF2E7D32)),
+            SizedBox(width: 8),
+            Text(
+              'Conexión segura (TLS)',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+            ),
+          ],
+        ),
+        subtitle: Text(
+          provider.usarTls
+              ? 'TLS activo: usa cifrado estricto y puerto 8883 (editable).'
+              : 'TLS desactivado: puerto 1883 sin cifrar (predeterminado del laboratorio).',
+          style: const TextStyle(fontSize: 12),
+        ),
+        value: provider.usarTls,
+        activeColor: const Color(0xFF2E7D32),
+        onChanged: bloqueado
+            ? null
+            : (valor) {
+                provider.setUsarTls(valor);
+                setState(() {
+                  _puertoController.text = provider.puerto.toString();
+                });
+              },
+      ),
+    );
+  }
+
   Widget _buildTarjetaEstado(
     ThemeData theme,
     ConexionEstado estado,
     String? error,
     bool esDemo,
+    bool usarTls,
   ) {
     if (esDemo) {
       return Container(
@@ -401,15 +441,17 @@ class _ConexionScreenState extends State<ConexionScreen> {
                     error,
                     style: TextStyle(
                       fontSize: 12,
-                      fontWeight: FontWeight.w500,
+                      fontWeight: FontWeight.w600,
                       color: Colors.red.shade900,
                     ),
                   ),
                 ] else if (estado == ConexionEstado.conectado) ...[
                   const SizedBox(height: 4),
-                  const Text(
-                    'Suscrito a: telemetria (QoS 0) y equipo (QoS 1)',
-                    style: TextStyle(
+                  Text(
+                    usarTls
+                        ? 'Conexión segura TLS activa. Suscrito a telemetria y equipo.'
+                        : 'Conexión TCP activa (sin TLS). Suscrito a telemetria y equipo.',
+                    style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
                       color: Color(0xFF2E7D32),
@@ -455,9 +497,9 @@ class _ConexionScreenState extends State<ConexionScreen> {
           ),
           const SizedBox(height: 8),
           const Text(
-            '• La contraseña vive estrictamente en la memoria volátil de la aplicación.\n'
-            '• No se guarda en disco, SharedPreferences ni se imprime en logs de consola.\n'
-            '• Conexión directa TCP con keep-alive de 20 s y auto-reconexión configurada.',
+            '• La contraseña vive estrictamente en la memoria RAM y se borra al desconectar.\n'
+            '• No se almacena en disco, SQLite, SharedPreferences ni se expone en logs ni errores.\n'
+            '• Admite TLS sobre TCP (puerto 8883) con validación estricta de certificados CA.',
             style: TextStyle(
               fontSize: 12,
               height: 1.4,

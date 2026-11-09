@@ -1,5 +1,4 @@
-/// Tópicos MQTT y avisos de arquitectura de Aqualerta.
-/// Tópicos definidos para el proyecto de Internet de las Cosas de la UNT.
+/// Tópicos MQTT y avisos de arquitectura para el proyecto Aqualerta.
 class MqttTopicos {
   MqttTopicos._();
 

@@ -6,13 +6,12 @@ import 'screens/main_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const FugasApp());
+  runApp(const AqualertaApp());
 }
 
 /// Aplicación móvil de detección temprana de fugas de agua con IoT.
-/// Universidad Nacional de Trujillo - Ingeniería de Sistemas.
-class FugasApp extends StatelessWidget {
-  const FugasApp({super.key});
+class AqualertaApp extends StatelessWidget {
+  const AqualertaApp({super.key});
 
   @override
   Widget build(BuildContext context) {
