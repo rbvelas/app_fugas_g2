@@ -45,7 +45,7 @@ La app **no recalcula** el estado: representa el que calcula el firmware del ESP
 | Conexión | Modo DEMO y TLS primero; el estado y los datos después. | Estado → datos → Conectar/Desconectar → «Opciones avanzadas» plegable. |
 | Conexión | Campos deshabilitados con bajo contraste al conectar. | Campos bloqueados, legibles, con candado y aviso «Desconecta para cambiar estos datos». |
 | Conexión | La contraseña podía quedar visible. | Oculta por defecto; se vuelve a ocultar al conectar, al cambiar de pestaña y al pasar a segundo plano. |
-| Conexión | Título «Conexión al Broker MQTT». | Título «Conexión» y ayudas simples: «Dirección del servidor», ejemplo `192.168.0.20`. |
+| Conexión | Título «Conexión al Broker MQTT». | Título «Conexión» y ayudas simples: «Dirección del servidor», ejemplo `192.168.1.50`. |
 | Global | Cada pantalla tenía una barra distinta; solo Monitoreo mostraba la conexión. | Barra común con nombre + chip Conectado / Sin conexión / Demo + ayuda. |
 | Global | «Fuga crítica», «SIN FLUJO», «DESVIACION». | «Fuga», «Sin flujo», «Desviación», «Normal», «En pausa». |
 | Global | El color podía ser el único indicador. | Siempre color + icono + texto; DEMO usa violeta. |

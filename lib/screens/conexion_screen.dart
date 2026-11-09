@@ -191,7 +191,7 @@ class _ConexionScreenState extends State<ConexionScreen>
                     _campoTexto(
                       controller: _hostController,
                       etiqueta: 'Dirección del servidor',
-                      pista: 'Ejemplo: 192.168.0.20',
+                      pista: 'Ejemplo: 192.168.1.50',
                       ayuda: 'IP o nombre del equipo donde corre el servidor.',
                       icono: Icons.dns_rounded,
                       bloqueado: bloqueado,
