@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../theme/paleta_estados.dart';
 
 /// Representa el estado calculado por el firmware del ESP32.
 /// La aplicación NO recalcula este estado, solo lo representa visualmente.
@@ -31,38 +32,56 @@ enum EstadoLectura {
   }
 
   /// Texto legible en español para la interfaz.
+  /// Se usa "Fuga" (igual que el firmware), nunca "Fuga crítica".
   String get etiqueta {
     switch (this) {
       case EstadoLectura.normal:
-        return 'NORMAL';
+        return 'Normal';
       case EstadoLectura.desviacion:
-        return 'DESVIACIÓN';
+        return 'Desviación';
       case EstadoLectura.fuga:
-        return 'FUGA CRÍTICA';
+        return 'Fuga';
       case EstadoLectura.sinFlujo:
-        return 'SIN FLUJO';
+        return 'Sin flujo';
       case EstadoLectura.desconocido:
-        return 'DESCONOCIDO';
+        return 'Desconocido';
+    }
+  }
+
+  /// Etiqueta breve de la diferencia de caudal para las cifras clave.
+  /// "normal / revisar / fuga" según el estado calculado por el equipo.
+  String get etiquetaDiferencia {
+    switch (this) {
+      case EstadoLectura.normal:
+        return 'Normal';
+      case EstadoLectura.desviacion:
+        return 'Revisar';
+      case EstadoLectura.fuga:
+        return 'Fuga';
+      case EstadoLectura.sinFlujo:
+        return 'Sin flujo';
+      case EstadoLectura.desconocido:
+        return 'Sin datos';
     }
   }
 
   /// Color semafórico principal según los requisitos:
   /// - Verde: NORMAL
-  /// - Amarillo: DESVIACION
+  /// - Ámbar: DESVIACION
   /// - Rojo: FUGA
   /// - Azul: SIN_FLUJO
   Color get color {
     switch (this) {
       case EstadoLectura.normal:
-        return const Color(0xFF2E7D32); // Verde 800
+        return PaletaEstados.normal;
       case EstadoLectura.desviacion:
-        return const Color(0xFFF57F17); // Ámbar / Amarillo intenso
+        return PaletaEstados.desviacion;
       case EstadoLectura.fuga:
-        return const Color(0xFFD32F2F); // Rojo 700
+        return PaletaEstados.fuga;
       case EstadoLectura.sinFlujo:
-        return const Color(0xFF1976D2); // Azul 700
+        return PaletaEstados.sinFlujo;
       case EstadoLectura.desconocido:
-        return const Color(0xFF757575); // Gris 600
+        return PaletaEstados.pausa;
     }
   }
 
@@ -70,15 +89,15 @@ enum EstadoLectura {
   Color get colorFondo {
     switch (this) {
       case EstadoLectura.normal:
-        return const Color(0xFFE8F5E9);
+        return PaletaEstados.normalFondo;
       case EstadoLectura.desviacion:
-        return const Color(0xFFFFFDE7);
+        return PaletaEstados.desviacionFondo;
       case EstadoLectura.fuga:
-        return const Color(0xFFFFEBEE);
+        return PaletaEstados.fugaFondo;
       case EstadoLectura.sinFlujo:
-        return const Color(0xFFE3F2FD);
+        return PaletaEstados.sinFlujoFondo;
       case EstadoLectura.desconocido:
-        return const Color(0xFFEEEEEE);
+        return PaletaEstados.pausaFondo;
     }
   }
 
@@ -86,15 +105,15 @@ enum EstadoLectura {
   Color get colorBorde {
     switch (this) {
       case EstadoLectura.normal:
-        return const Color(0xFFA5D6A7);
+        return PaletaEstados.normalBorde;
       case EstadoLectura.desviacion:
-        return const Color(0xFFFFF59D);
+        return PaletaEstados.desviacionBorde;
       case EstadoLectura.fuga:
-        return const Color(0xFFEF9A9A);
+        return PaletaEstados.fugaBorde;
       case EstadoLectura.sinFlujo:
-        return const Color(0xFF90CAF9);
+        return PaletaEstados.sinFlujoBorde;
       case EstadoLectura.desconocido:
-        return const Color(0xFFE0E0E0);
+        return PaletaEstados.pausaBorde;
     }
   }
 
@@ -106,7 +125,7 @@ enum EstadoLectura {
       case EstadoLectura.desviacion:
         return Icons.warning_amber_rounded;
       case EstadoLectura.fuga:
-        return Icons.error_outline_rounded;
+        return Icons.error_rounded;
       case EstadoLectura.sinFlujo:
         return Icons.water_drop_outlined;
       case EstadoLectura.desconocido:
@@ -114,20 +133,19 @@ enum EstadoLectura {
     }
   }
 
-  /// Descripción detallada de la regla calculada en el firmware.
+  /// Descripción breve, en lenguaje del usuario (sin jerga del protocolo).
   String get descripcion {
     switch (this) {
       case EstadoLectura.normal:
-        return 'Flujo de agua dentro de los parámetros esperados.';
+        return 'El agua circula como se espera.';
       case EstadoLectura.desviacion:
-        return 'Diferencia ≥ 15 % durante 3 lecturas continuas.';
+        return 'Hay una diferencia moderada entre el agua que entra y la que sale.';
       case EstadoLectura.fuga:
-        return 'Fuga detectada: Diferencia ≥ 30 % durante 3 lecturas continuas.';
+        return 'La diferencia es grande: revisa el tramo de tubería cuanto antes.';
       case EstadoLectura.sinFlujo:
-        return 'Ambos sensores registran caudales < 0,5 L/min.';
+        return 'No está pasando agua por el tramo.';
       case EstadoLectura.desconocido:
-        return 'Estado no reconocido o sin telemetría reciente.';
+        return 'No hay datos suficientes para determinar el estado.';
     }
   }
 }
-

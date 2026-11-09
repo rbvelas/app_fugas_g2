@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import '../theme/paleta_estados.dart';
 
-/// Tarjeta para visualización de métricas individuales o compuestas.
-/// Si no hay datos, muestra claramente "sin datos".
+/// Cifra clave de Monitoreo.
+///
+/// No recorta textos con "…": permite varias líneas y crece con el tamaño de
+/// letra del sistema (hasta 200 %). El color nunca es el único indicador: cada
+/// insignia incluye icono y texto.
 class MetricaCard extends StatelessWidget {
   final String titulo;
   final String valor;
@@ -9,8 +13,9 @@ class MetricaCard extends StatelessWidget {
   final String? subtitulo;
   final IconData icono;
   final Color? colorIcono;
-  final bool porCompletar;
-  final bool esDestacado;
+  final Color? colorValor;
+  final Widget? insignia;
+  final String? semantica;
 
   const MetricaCard({
     super.key,
@@ -20,125 +25,97 @@ class MetricaCard extends StatelessWidget {
     this.unidad,
     this.subtitulo,
     this.colorIcono,
-    this.porCompletar = false,
-    this.esDestacado = false,
+    this.colorValor,
+    this.insignia,
+    this.semantica,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final bool sinDatos = valor.trim().toLowerCase() == 'sin datos';
+    final color = colorValor ?? theme.colorScheme.onSurface;
 
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: esDestacado
-            ? theme.colorScheme.primaryContainer.withOpacity(0.3)
-            : theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: esDestacado
-              ? theme.colorScheme.primary.withOpacity(0.3)
-              : theme.colorScheme.outlineVariant.withOpacity(0.5),
+    return Semantics(
+      container: true,
+      label: semantica ??
+          '$titulo: $valor ${unidad ?? ''}. ${subtitulo ?? ''}'.trim(),
+      excludeSemantics: true,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: theme.colorScheme.outlineVariant),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.02),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            children: [
-              Icon(
-                icono,
-                size: 20,
-                color: colorIcono ?? theme.colorScheme.primary,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  titulo,
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  icono,
+                  size: 20,
+                  color: colorIcono ?? theme.colorScheme.primary,
                 ),
-              ),
-              if (porCompletar)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.amber.shade100,
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: Colors.amber.shade700, width: 0.8),
-                  ),
+                const SizedBox(width: 8),
+                Expanded(
                   child: Text(
-                    '[POR COMPLETAR]',
-                    style: TextStyle(
-                      fontSize: 9,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.amber.shade900,
+                    titulo,
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: PaletaEstados.textoSecundario,
+                      height: 1.2,
                     ),
                   ),
                 ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              Flexible(
-                child: Text(
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.end,
+              spacing: 4,
+              runSpacing: 2,
+              children: [
+                Text(
                   valor,
                   style: theme.textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    fontSize: sinDatos ? 18 : 22,
-                    color: sinDatos
-                        ? theme.colorScheme.outline
-                        : (esDestacado
-                            ? theme.colorScheme.primary
-                            : theme.colorScheme.onSurface),
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              if (unidad != null && !sinDatos) ...[
-                const SizedBox(width: 4),
-                Text(
-                  unidad!,
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: theme.colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w900,
+                    color: color,
+                    height: 1.1,
                   ),
                 ),
+                if (unidad != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: Text(
+                      unidad!,
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: PaletaEstados.textoSecundario,
+                      ),
+                    ),
+                  ),
               ],
-            ],
-          ),
-          if (subtitulo != null) ...[
-            const SizedBox(height: 4),
-            Text(
-              subtitulo!,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant.withOpacity(0.8),
-                fontSize: 11,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
             ),
+            if (insignia != null) ...[
+              const SizedBox(height: 8),
+              insignia!,
+            ],
+            if (subtitulo != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                subtitulo!,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: PaletaEstados.textoSecundario,
+                  height: 1.25,
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
 }
-

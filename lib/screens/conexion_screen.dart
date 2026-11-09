@@ -2,21 +2,33 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/conexion_estado.dart';
 import '../providers/telemetria_provider.dart';
+import '../theme/paleta_estados.dart';
 import '../utils/validador_conexion.dart';
+import '../widgets/barra_superior_aqualerta.dart';
 import '../widgets/demo_banner.dart';
 
-/// Pantalla de configuración y gestión de la conexión MQTT con el broker EMQX.
-/// Soporta interruptor TLS seguro y modo DEMO local.
-/// La contraseña ingresada reside exclusivamente en la memoria RAM y se borra
-/// automáticamente al desconectar.
+/// Pantalla de Conexión.
+///
+/// Orden: estado → datos de conexión → botón Conectar/Desconectar →
+/// Opciones avanzadas (TLS y Modo DEMO).
+/// La contraseña está oculta por defecto y se vuelve a ocultar al conectar,
+/// al cambiar de pestaña y al pasar la app a segundo plano.
 class ConexionScreen extends StatefulWidget {
-  const ConexionScreen({super.key});
+  final VoidCallback onIrAConexion;
+  final bool visible;
+
+  const ConexionScreen({
+    super.key,
+    required this.onIrAConexion,
+    this.visible = true,
+  });
 
   @override
   State<ConexionScreen> createState() => _ConexionScreenState();
 }
 
-class _ConexionScreenState extends State<ConexionScreen> {
+class _ConexionScreenState extends State<ConexionScreen>
+    with WidgetsBindingObserver {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _hostController;
   late final TextEditingController _puertoController;
@@ -28,15 +40,34 @@ class _ConexionScreenState extends State<ConexionScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final provider = context.read<TelemetriaProvider>();
     _hostController = TextEditingController(text: provider.host);
-    _puertoController = TextEditingController(text: provider.puerto.toString());
+    _puertoController =
+        TextEditingController(text: provider.puerto.toString());
     _usuarioController = TextEditingController(text: provider.usuario);
     _passwordController = TextEditingController();
   }
 
   @override
+  void didUpdateWidget(covariant ConexionScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.visible && oldWidget.visible) {
+      _ocultarContrasenaAhora();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      _ocultarContrasenaAhora();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _hostController.dispose();
     _puertoController.dispose();
     _usuarioController.dispose();
@@ -44,10 +75,17 @@ class _ConexionScreenState extends State<ConexionScreen> {
     super.dispose();
   }
 
-  void _ejecutarAccionConexion(TelemetriaProvider provider) async {
+  void _ocultarContrasenaAhora() {
+    if (!mounted || _ocultarPassword) return;
+    setState(() {
+      _ocultarPassword = true;
+    });
+  }
+
+  Future<void> _ejecutarAccionConexion(TelemetriaProvider provider) async {
     if (provider.estadoConexion == ConexionEstado.conectado) {
-      // Borrado explícito de contraseña en RAM y desconexión
       _passwordController.clear();
+      _ocultarContrasenaAhora();
       await provider.desconectar();
       return;
     }
@@ -57,16 +95,48 @@ class _ConexionScreenState extends State<ConexionScreen> {
     }
 
     final host = _hostController.text.trim();
-    final puerto = int.tryParse(_puertoController.text.trim()) ?? (provider.usarTls ? 8883 : 1883);
+    final puerto = int.tryParse(_puertoController.text.trim()) ??
+        (provider.usarTls ? 8883 : 1883);
     final usuario = _usuarioController.text.trim();
     final password = _passwordController.text;
 
-    await provider.conectar(
+    setState(() {
+      _ocultarPassword = true;
+    });
+
+    final exito = await provider.conectar(
       host: host,
       puerto: puerto,
       usuario: usuario.isNotEmpty ? usuario : null,
       password: password.isNotEmpty ? password : null,
       usarTls: provider.usarTls,
+    );
+
+    if (!mounted) return;
+    if (exito) {
+      _passwordController.clear();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Conexión establecida'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo conectar. Revisa los datos.'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+  void _avisarBloqueo(String motivo) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(motivo),
+        duration: const Duration(seconds: 2),
+      ),
     );
   }
 
@@ -78,174 +148,145 @@ class _ConexionScreenState extends State<ConexionScreen> {
     final estaConectado = estado == ConexionEstado.conectado;
     final estaConectando = estado == ConexionEstado.conectando;
     final esDemo = provider.modoDemoActivo;
+    final bloqueado = estaConectado || estaConectando || esDemo;
+
+    final motivoBloqueo = esDemo
+        ? 'Desactiva el Modo DEMO para configurar la conexión.'
+        : estaConectado
+            ? 'Desconecta para cambiar estos datos.'
+            : estaConectando
+                ? 'Espera a que termine la conexión.'
+                : null;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          'Conexión al Broker MQTT',
-          style: TextStyle(fontWeight: FontWeight.w800),
-        ),
+      appBar: BarraSuperiorAqualerta(
+        titulo: 'Conexión',
+        onIrAConexion: widget.onIrAConexion,
       ),
       body: Column(
         children: [
           if (esDemo) const DemoBanner(),
-
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16.0),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
               child: Form(
                 key: _formKey,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // 1. Interruptores: Modo DEMO y TLS Seguro
-                    _buildSwitchModoDemo(theme, provider),
-                    const SizedBox(height: 10),
-                    _buildSwitchTls(theme, provider, estaConectado || estaConectando),
-
+                    _TarjetaEstadoConexion(
+                      estado: estado,
+                      esDemo: esDemo,
+                      usarTls: provider.usarTls,
+                      mensajeError: provider.mensajeError,
+                      estaConectando: estaConectando,
+                      onReintentar: () =>
+                          _ejecutarAccionConexion(provider),
+                    ),
                     const SizedBox(height: 16),
-
-                    // 2. Tarjeta visual del estado de la conexión
-                    _buildTarjetaEstado(theme, estado, provider.mensajeError, esDemo, provider.usarTls),
-
-                    const SizedBox(height: 20),
-
-                    // 3. Campo Host / IP (con validación de espacios y esquemas)
-                    TextFormField(
+                    if (motivoBloqueo != null) ...[
+                      _AvisoBloqueo(motivo: motivoBloqueo),
+                      const SizedBox(height: 12),
+                    ],
+                    _campoTexto(
                       controller: _hostController,
-                      enabled: !estaConectando && !estaConectado && !esDemo,
-                      decoration: const InputDecoration(
-                        labelText: 'Host o Dirección IP del Broker',
-                        hintText: 'IP del equipo donde corre EMQX',
-                        helperText: 'Sin espacios ni esquema (no use http:// ni mqtt://)',
-                        prefixIcon: Icon(Icons.dns_rounded),
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (esDemo) return null;
-                        return ValidadorConexion.validarHost(value);
-                      },
+                      etiqueta: 'Dirección del servidor',
+                      pista: 'Ejemplo: 192.168.0.20',
+                      ayuda: 'IP o nombre del equipo donde corre el servidor.',
+                      icono: Icons.dns_rounded,
+                      bloqueado: bloqueado,
+                      motivoBloqueo: motivoBloqueo,
+                      validador: (value) =>
+                          esDemo ? null : ValidadorConexion.validarHost(value),
                     ),
-
-                    const SizedBox(height: 16),
-
-                    // 4. Campo Puerto (1883 o 8883 editable, rango 1-65535)
-                    TextFormField(
+                    const SizedBox(height: 14),
+                    _campoTexto(
                       controller: _puertoController,
-                      enabled: !estaConectando && !estaConectado && !esDemo,
-                      keyboardType: TextInputType.number,
-                      decoration: InputDecoration(
-                        labelText: 'Puerto TCP',
-                        hintText: provider.usarTls ? '8883' : '1883',
-                        helperText: provider.usarTls
-                            ? 'Puerto estándar TLS seguro (8883)'
-                            : 'Puerto TCP estándar sin cifrar (1883)',
-                        prefixIcon: const Icon(Icons.numbers_rounded),
-                        border: const OutlineInputBorder(),
+                      etiqueta: 'Puerto',
+                      pista: provider.usarTls ? '8883' : '1883',
+                      ayuda: provider.usarTls
+                          ? 'Puerto habitual con conexión segura (8883).'
+                          : 'Puerto habitual sin cifrado (1883).',
+                      icono: Icons.numbers_rounded,
+                      bloqueado: bloqueado,
+                      motivoBloqueo: motivoBloqueo,
+                      teclado: TextInputType.number,
+                      validador: (value) =>
+                          esDemo ? null : ValidadorConexion.validarPuerto(value),
+                    ),
+                    const SizedBox(height: 14),
+                    _campoTexto(
+                      controller: _usuarioController,
+                      etiqueta: 'Usuario (opcional)',
+                      pista: 'Déjalo vacío si no se pide',
+                      ayuda: 'Nombre de usuario del servidor, si lo tiene.',
+                      icono: Icons.person_rounded,
+                      bloqueado: bloqueado,
+                      motivoBloqueo: motivoBloqueo,
+                    ),
+                    const SizedBox(height: 14),
+                    _campoContrasena(provider, bloqueado, motivoBloqueo),
+                    const SizedBox(height: 20),
+                    FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: estaConectado
+                            ? PaletaEstados.pausa
+                            : theme.colorScheme.primary,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size(48, 52),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
-                      validator: (value) {
-                        if (esDemo) return null;
-                        return ValidadorConexion.validarPuerto(value);
+                      onPressed: estaConectando || esDemo
+                          ? null
+                          : () => _ejecutarAccionConexion(provider),
+                      icon: estaConectando
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.5,
+                                color: Colors.white,
+                              ),
+                            )
+                          : Icon(
+                              estaConectado
+                                  ? Icons.power_settings_new_rounded
+                                  : Icons.link_rounded,
+                            ),
+                      label: Text(
+                        estaConectando
+                            ? 'Conectando…'
+                            : (estaConectado ? 'Desconectar' : 'Conectar'),
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    _OpcionesAvanzadas(
+                      provider: provider,
+                      estado: estado,
+                      esDemo: esDemo,
+                      alCambiarTls: () {
+                        setState(() {
+                          _puertoController.text =
+                              provider.puerto.toString();
+                        });
                       },
                     ),
-
                     const SizedBox(height: 16),
-
-                    // 5. Campo Usuario (opcional)
-                    TextFormField(
-                      controller: _usuarioController,
-                      enabled: !estaConectando && !estaConectado && !esDemo,
-                      decoration: const InputDecoration(
-                        labelText: 'Usuario MQTT (Opcional)',
-                        hintText: 'Dejar vacío si el broker no requiere autenticación',
-                        prefixIcon: Icon(Icons.person_rounded),
-                        border: OutlineInputBorder(),
+                    const Text(
+                      'La contraseña no se guarda en el teléfono: '
+                      'solo vive en memoria mientras dura la conexión.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: PaletaEstados.textoSecundario,
+                        height: 1.35,
                       ),
                     ),
-
-                    const SizedBox(height: 16),
-
-                    // 6. Campo Contraseña (oculto por defecto, solo en memoria)
-                    TextFormField(
-                      controller: _passwordController,
-                      enabled: !estaConectando && !estaConectado && !esDemo,
-                      obscureText: _ocultarPassword,
-                      decoration: InputDecoration(
-                        labelText: 'Contraseña (Opcional)',
-                        hintText: 'Reside únicamente en memoria RAM',
-                        helperText: 'Se borra de memoria automáticamente al desconectar',
-                        prefixIcon: const Icon(Icons.lock_rounded),
-                        border: const OutlineInputBorder(),
-                        suffixIcon: IconButton(
-                          icon: Icon(
-                            _ocultarPassword
-                                ? Icons.visibility_rounded
-                                : Icons.visibility_off_rounded,
-                          ),
-                          onPressed: () {
-                            setState(() {
-                              _ocultarPassword = !_ocultarPassword;
-                            });
-                          },
-                          tooltip: _ocultarPassword
-                              ? 'Mostrar contraseña'
-                              : 'Ocultar contraseña',
-                          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    // 7. Botón principal Conectar / Desconectar (Altura ≥ 48 dp)
-                    SizedBox(
-                      height: 52, // Cumple requisito botones ≥ 48 dp
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: estaConectado
-                              ? const Color(0xFFD32F2F)
-                              : (estaConectando ? Colors.amber.shade800 : null),
-                          foregroundColor: estaConectado || estaConectando
-                              ? Colors.white
-                              : null,
-                          elevation: 2,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        onPressed: estaConectando || esDemo
-                            ? null
-                            : () => _ejecutarAccionConexion(provider),
-                        icon: estaConectando
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2.5,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : Icon(estaConectado
-                                ? Icons.power_settings_new_rounded
-                                : Icons.link_rounded),
-                        label: Text(
-                          estaConectando
-                              ? 'Conectando...'
-                              : (estaConectado
-                                  ? 'Desconectar del Broker'
-                                  : 'Conectar al Broker'),
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    // 8. Tarjeta informativa de privacidad y seguridad
-                    _buildTarjetaInformacion(theme),
                   ],
                 ),
               ),
@@ -256,256 +297,378 @@ class _ConexionScreenState extends State<ConexionScreen> {
     );
   }
 
-  Widget _buildSwitchModoDemo(ThemeData theme, TelemetriaProvider provider) {
-    return Container(
-      decoration: BoxDecoration(
-        color: provider.modoDemoActivo
-            ? const Color(0xFFFFF3E0)
-            : theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: provider.modoDemoActivo
-              ? const Color(0xFFFF9800)
-              : theme.colorScheme.outlineVariant.withOpacity(0.5),
-          width: provider.modoDemoActivo ? 1.5 : 1.0,
-        ),
+  Widget _campoTexto({
+    required TextEditingController controller,
+    required String etiqueta,
+    required String pista,
+    required String ayuda,
+    required IconData icono,
+    required bool bloqueado,
+    required String? motivoBloqueo,
+    TextInputType? teclado,
+    String? Function(String?)? validador,
+  }) {
+    final theme = Theme.of(context);
+    return TextFormField(
+      controller: controller,
+      readOnly: bloqueado,
+      showCursor: !bloqueado,
+      enableInteractiveSelection: !bloqueado,
+      keyboardType: teclado,
+      autocorrect: false,
+      enableSuggestions: false,
+      onTap: bloqueado && motivoBloqueo != null
+          ? () => _avisarBloqueo(motivoBloqueo)
+          : null,
+      style: TextStyle(
+        color: theme.colorScheme.onSurface,
+        fontWeight: FontWeight.w500,
       ),
-      child: SwitchListTile(
-        title: const Row(
-          children: [
-            Icon(Icons.science_rounded, size: 20, color: Color(0xFFE65100)),
-            SizedBox(width: 8),
-            Text(
-              'Modo DEMO',
-              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
-            ),
-          ],
-        ),
-        subtitle: const Text(
-          'Reproduce datos ficticios en bucle (60 filas, 1 lect/s) sin broker MQTT.',
-          style: TextStyle(fontSize: 12),
-        ),
-        value: provider.modoDemoActivo,
-        activeColor: const Color(0xFFE65100),
-        onChanged: (valor) {
-          provider.setModoDemo(valor);
-        },
+      decoration: InputDecoration(
+        labelText: etiqueta,
+        hintText: pista,
+        helperText: bloqueado ? null : ayuda,
+        prefixIcon: Icon(icono),
+        suffixIcon: bloqueado
+            ? const Icon(Icons.lock_outline_rounded, size: 18)
+            : null,
+        filled: bloqueado,
+        fillColor:
+            bloqueado ? PaletaEstados.pausaFondo : null,
+        border: const OutlineInputBorder(),
       ),
+      validator: validador,
     );
   }
 
-  Widget _buildSwitchTls(ThemeData theme, TelemetriaProvider provider, bool bloqueado) {
-    return Container(
-      decoration: BoxDecoration(
-        color: provider.usarTls ? const Color(0xFFE8F5E9) : theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: provider.usarTls ? const Color(0xFF2E7D32) : theme.colorScheme.outlineVariant.withOpacity(0.5),
-          width: provider.usarTls ? 1.5 : 1.0,
-        ),
-      ),
-      child: SwitchListTile(
-        title: const Row(
-          children: [
-            Icon(Icons.lock_outline_rounded, size: 20, color: Color(0xFF2E7D32)),
-            SizedBox(width: 8),
-            Text(
-              'Conexión segura (TLS)',
-              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
-            ),
-          ],
-        ),
-        subtitle: Text(
-          provider.usarTls
-              ? 'TLS activo: usa cifrado estricto y puerto 8883 (editable).'
-              : 'TLS desactivado: puerto 1883 sin cifrar (predeterminado del laboratorio).',
-          style: const TextStyle(fontSize: 12),
-        ),
-        value: provider.usarTls,
-        activeColor: const Color(0xFF2E7D32),
-        onChanged: bloqueado
-            ? null
-            : (valor) {
-                provider.setUsarTls(valor);
-                setState(() {
-                  _puertoController.text = provider.puerto.toString();
-                });
-              },
-      ),
-    );
-  }
-
-  Widget _buildTarjetaEstado(
-    ThemeData theme,
-    ConexionEstado estado,
-    String? error,
-    bool esDemo,
-    bool usarTls,
+  Widget _campoContrasena(
+    TelemetriaProvider provider,
+    bool bloqueado,
+    String? motivoBloqueo,
   ) {
-    if (esDemo) {
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: const Color(0xFFFFF3E0),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFFFF9800), width: 1.5),
-        ),
-        child: const Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(Icons.science_rounded, color: Color(0xFFE65100), size: 28),
-            SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'ESTADO DEL SISTEMA',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.6,
-                      color: Color(0xFFE65100),
-                    ),
-                  ),
-                  SizedBox(height: 2),
-                  Text(
-                    'Modo DEMO activo',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFFE65100),
-                    ),
-                  ),
-                  SizedBox(height: 4),
-                  Text(
-                    'Simulando telemetría desde assets/demo_telemetria.csv.',
-                    style: TextStyle(fontSize: 12, color: Color(0xFF424242)),
-                  ),
-                ],
+    final theme = Theme.of(context);
+    return TextFormField(
+      controller: _passwordController,
+      readOnly: bloqueado,
+      showCursor: !bloqueado,
+      enableInteractiveSelection: !bloqueado,
+      obscureText: _ocultarPassword,
+      autocorrect: false,
+      enableSuggestions: false,
+      onTap: bloqueado && motivoBloqueo != null
+          ? () => _avisarBloqueo(motivoBloqueo)
+          : null,
+      style: TextStyle(
+        color: theme.colorScheme.onSurface,
+        fontWeight: FontWeight.w500,
+      ),
+      decoration: InputDecoration(
+        labelText: 'Contraseña (opcional)',
+        hintText: bloqueado && provider.tieneContrasena
+            ? 'Guardada en memoria'
+            : 'Solo se guarda en memoria',
+        helperText: bloqueado ? null : 'Se borra al desconectar.',
+        prefixIcon: const Icon(Icons.lock_rounded),
+        suffixIcon: bloqueado
+            ? const Icon(Icons.lock_outline_rounded, size: 18)
+            : IconButton(
+                constraints:
+                    const BoxConstraints(minWidth: 48, minHeight: 48),
+                tooltip: _ocultarPassword
+                    ? 'Mostrar contraseña'
+                    : 'Ocultar contraseña',
+                icon: Icon(
+                  _ocultarPassword
+                      ? Icons.visibility_rounded
+                      : Icons.visibility_off_rounded,
+                ),
+                onPressed: () {
+                  setState(() {
+                    _ocultarPassword = !_ocultarPassword;
+                  });
+                },
               ),
-            ),
-          ],
-        ),
-      );
-    }
+        filled: bloqueado,
+        fillColor:
+            bloqueado ? PaletaEstados.pausaFondo : null,
+        border: const OutlineInputBorder(),
+      ),
+    );
+  }
+}
 
+class _AvisoBloqueo extends StatelessWidget {
+  final String motivo;
+
+  const _AvisoBloqueo({required this.motivo});
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: estado.color.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: estado.color.withOpacity(0.4), width: 1.5),
+        color: PaletaEstados.infoFondo,
+        borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: estado.color.withOpacity(0.2),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              estado.icono,
-              color: estado.color,
-              size: 26,
-            ),
-          ),
-          const SizedBox(width: 14),
+          const Icon(Icons.lock_outline_rounded,
+              size: 18, color: PaletaEstados.sinFlujo),
+          const SizedBox(width: 8),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'ESTADO DE LA CONEXIÓN',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.6,
-                    color: Color(0xFF616161),
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  estado.etiqueta,
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                    color: estado.color,
-                  ),
-                ),
-                if (estado == ConexionEstado.error && error != null) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    error,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.red.shade900,
-                    ),
-                  ),
-                ] else if (estado == ConexionEstado.conectado) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    usarTls
-                        ? 'Conexión segura TLS activa. Suscrito a telemetria y equipo.'
-                        : 'Conexión TCP activa (sin TLS). Suscrito a telemetria y equipo.',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      color: Color(0xFF2E7D32),
-                    ),
-                  ),
-                ],
-              ],
+            child: Text(
+              motivo,
+              style: const TextStyle(
+                color: PaletaEstados.textoSecundario,
+                fontSize: 13,
+                height: 1.3,
+              ),
             ),
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildTarjetaInformacion(ThemeData theme) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface.withOpacity(0.6),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: theme.colorScheme.outlineVariant.withOpacity(0.4)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                Icons.security_rounded,
-                size: 18,
-                color: theme.colorScheme.primary,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'POLÍTICA DE PRIVACIDAD Y SEGURIDAD',
-                style: theme.textTheme.labelMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  color: theme.colorScheme.primary,
-                  letterSpacing: 0.5,
+class _TarjetaEstadoConexion extends StatelessWidget {
+  final ConexionEstado estado;
+  final bool esDemo;
+  final bool usarTls;
+  final String? mensajeError;
+  final bool estaConectando;
+  final VoidCallback onReintentar;
+
+  const _TarjetaEstadoConexion({
+    required this.estado,
+    required this.esDemo,
+    required this.usarTls,
+    required this.mensajeError,
+    required this.estaConectando,
+    required this.onReintentar,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final Color color;
+    final Color fondo;
+    final IconData icono;
+    final String titulo;
+    final String detalle;
+
+    if (esDemo) {
+      color = PaletaEstados.demo;
+      fondo = PaletaEstados.demoFondo;
+      icono = Icons.science_rounded;
+      titulo = 'Modo DEMO activo';
+      detalle = 'Se muestran datos de ejemplo. No hay un equipo real conectado.';
+    } else {
+      color = estado.color;
+      fondo = estado.colorFondo;
+      icono = estado.icono;
+      titulo = estado.etiquetaDetallada;
+      if (estado == ConexionEstado.conectado) {
+        detalle = usarTls
+            ? 'Conexión segura activa. Recibiendo datos del servidor.'
+            : 'Recibiendo datos del servidor.';
+      } else if (estado == ConexionEstado.conectando) {
+        detalle = 'Esperando respuesta del servidor…';
+      } else if (estado == ConexionEstado.error) {
+        detalle = mensajeError ??
+            'Revisa la dirección y el puerto, y vuelve a intentar.';
+      } else {
+        detalle = 'Ingresa los datos y presiona Conectar.';
+      }
+    }
+
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: 'Estado de la conexión: $titulo. $detalle',
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: fondo,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withAlpha(102), width: 1.5),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: color.withAlpha(41),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(icono, color: color, size: 26),
                 ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        titulo,
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                          color: color,
+                          height: 1.2,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        detalle,
+                        style: const TextStyle(
+                          color: PaletaEstados.textoSecundario,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            if (estaConectando) ...[
+              const SizedBox(height: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: const LinearProgressIndicator(minHeight: 6),
               ),
             ],
+            if (!esDemo &&
+                estado == ConexionEstado.error &&
+                !estaConectando) ...[
+              const SizedBox(height: 12),
+              FilledButton.tonalIcon(
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(48, 48),
+                ),
+                onPressed: onReintentar,
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Reintentar'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OpcionesAvanzadas extends StatelessWidget {
+  final TelemetriaProvider provider;
+  final ConexionEstado estado;
+  final bool esDemo;
+  final VoidCallback alCambiarTls;
+
+  const _OpcionesAvanzadas({
+    required this.provider,
+    required this.estado,
+    required this.esDemo,
+    required this.alCambiarTls,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final puedeCambiar = estado == ConexionEstado.desconectado ||
+        estado == ConexionEstado.error;
+    final bloqueadoTls = !puedeCambiar || esDemo;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: ExpansionTile(
+        shape: const Border(),
+        collapsedShape: const Border(),
+        leading: const Icon(
+          Icons.settings_outlined,
+          color: PaletaEstados.textoSecundario,
+        ),
+        title: const Text(
+          'Opciones avanzadas',
+          style: TextStyle(fontWeight: FontWeight.w800),
+        ),
+        subtitle: const Text(
+          'Conexión segura y modo de prueba',
+          style: TextStyle(
+            color: PaletaEstados.textoSecundario,
+            fontSize: 12,
           ),
-          const SizedBox(height: 8),
-          const Text(
-            '• La contraseña vive estrictamente en la memoria RAM y se borra al desconectar.\n'
-            '• No se almacena en disco, SQLite, SharedPreferences ni se expone en logs ni errores.\n'
-            '• Admite TLS sobre TCP (puerto 8883) con validación estricta de certificados CA.',
-            style: TextStyle(
-              fontSize: 12,
-              height: 1.4,
-              color: Color(0xFF424242),
+        ),
+        childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
+        children: [
+          SwitchListTile(
+            value: provider.usarTls,
+            onChanged: bloqueadoTls
+                ? null
+                : (valor) {
+                    provider.setUsarTls(valor);
+                    alCambiarTls();
+                  },
+            title: const Text(
+              'Conexión segura (TLS)',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            subtitle: Text(
+              provider.usarTls
+                  ? 'Protege la conexión con cifrado. Puerto 8883.'
+                  : 'Sin cifrado. Puerto 1883.',
+              style: const TextStyle(
+                color: PaletaEstados.textoSecundario,
+                fontSize: 12,
+              ),
+            ),
+            secondary: const Icon(
+              Icons.lock_outline_rounded,
+              color: PaletaEstados.normal,
             ),
           ),
+          SwitchListTile(
+            value: provider.modoDemoActivo,
+            onChanged: estado == ConexionEstado.conectando
+                ? null
+                : (valor) {
+                    provider.setModoDemo(valor);
+                  },
+            title: const Text(
+              'Modo DEMO',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            subtitle: const Text(
+              'Muestra datos de ejemplo sin conectar un equipo.',
+              style: TextStyle(
+                color: PaletaEstados.textoSecundario,
+                fontSize: 12,
+              ),
+            ),
+            secondary: const Icon(
+              Icons.science_outlined,
+              color: PaletaEstados.demo,
+            ),
+          ),
+          if (!puedeCambiar)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 4, 16, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Desconecta para cambiar la conexión segura.',
+                  style: TextStyle(
+                    color: PaletaEstados.textoSecundario,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );

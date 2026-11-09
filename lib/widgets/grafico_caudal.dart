@@ -2,9 +2,15 @@ import 'dart:math';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import '../models/lectura.dart';
+import '../theme/paleta_estados.dart';
+import '../utils/formato_numeros.dart';
 
-/// Gráfico temporal continuo de los últimos 120 segundos utilizando fl_chart.
-/// Muestra simultáneamente el caudal de entrada (Qe) y el de salida (Qs) con leyenda.
+/// Gráfico de los últimos 120 segundos.
+///
+/// - Eje Y con marcas "agradables" (0, 1, 2, 3…).
+/// - Entrada en línea continua y salida en línea discontinua.
+/// - Leyenda con los valores actuales.
+/// - Aviso "Sin flujo" superpuesto cuando ambos caudales son 0.
 class GraficoCaudal extends StatelessWidget {
   final List<Lectura> lecturas;
 
@@ -13,87 +19,75 @@ class GraficoCaudal extends StatelessWidget {
     required this.lecturas,
   });
 
+  static const Color _colorEntrada = Color(0xFF0D47A1);
+  static const Color _colorSalida = Color(0xFFC2410C);
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    const colorEntrada = Color(0xFF0288D1); // Azul cian para Entrada
-    const colorSalida = Color(0xFFE65100); // Naranja oscuro para Salida
+    final actual = lecturas.isEmpty ? null : lecturas.last;
 
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: theme.colorScheme.outlineVariant.withOpacity(0.5)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.02),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        border: Border.all(color: theme.colorScheme.outlineVariant),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'HISTORIAL EN TIEMPO REAL (120 s)',
-                style: theme.textTheme.labelMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.6,
-                  color: theme.colorScheme.onSurfaceVariant,
+              Expanded(
+                child: Text(
+                  'Caudal de los últimos 2 minutos',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
-              const Icon(Icons.show_chart_rounded, size: 20, color: Color(0xFF757575)),
+              const SizedBox(width: 8),
+              Text(
+                'L/min',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: PaletaEstados.textoSecundario,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 12),
-          // Leyenda interactiva
-          Row(
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 16,
+            runSpacing: 6,
             children: [
-              _buildLeyendaItem('Qe Entrada (L/min)', colorEntrada),
-              const SizedBox(width: 16),
-              _buildLeyendaItem('Qs Salida (L/min)', colorSalida),
+              _LeyendaLinea(
+                color: _colorEntrada,
+                discontinua: false,
+                texto: actual == null
+                    ? 'Entrada'
+                    : 'Entrada ${numeroConComa(actual.caudalEntrada)} L/min',
+              ),
+              _LeyendaLinea(
+                color: _colorSalida,
+                discontinua: true,
+                texto: actual == null
+                    ? 'Salida'
+                    : 'Salida ${numeroConComa(actual.caudalSalida)} L/min',
+              ),
             ],
           ),
-          const SizedBox(height: 16),
-          // Área del gráfico
+          const SizedBox(height: 14),
           SizedBox(
-            height: 200,
+            height: 210,
             child: lecturas.isEmpty
                 ? _buildEstadoVacio(theme)
-                : _buildLineChart(theme, colorEntrada, colorSalida),
+                : _buildGrafico(context, actual),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildLeyendaItem(String label, Color color) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 12,
-          height: 12,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(3),
-          ),
-        ),
-        const SizedBox(width: 6),
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: Color(0xFF424242),
-          ),
-        ),
-      ],
     );
   }
 
@@ -103,22 +97,24 @@ class GraficoCaudal extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            Icons.query_builder_rounded,
+            Icons.show_chart_rounded,
             size: 36,
-            color: theme.colorScheme.outline.withOpacity(0.6),
+            color: theme.colorScheme.outline,
           ),
           const SizedBox(height: 8),
           Text(
-            'Esperando telemetría del ESP32...',
+            'Aún no hay datos para el gráfico',
+            textAlign: TextAlign.center,
             style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.outline,
+              color: PaletaEstados.textoSecundario,
             ),
           ),
           const SizedBox(height: 2),
           Text(
-            'Los puntos aparecerán automáticamente cada 1 s.',
+            'Los puntos aparecerán cuando llegue la primera lectura.',
+            textAlign: TextAlign.center,
             style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.outline.withOpacity(0.7),
+              color: PaletaEstados.textoSecundario,
             ),
           ),
         ],
@@ -126,160 +122,291 @@ class GraficoCaudal extends StatelessWidget {
     );
   }
 
-  Widget _buildLineChart(ThemeData theme, Color colorEntrada, Color colorSalida) {
+  Widget _buildGrafico(BuildContext context, Lectura? actual) {
+    final theme = Theme.of(context);
     final ahora = DateTime.now();
     final spotsEntrada = <FlSpot>[];
     final spotsSalida = <FlSpot>[];
+    double maxValor = 0;
 
-    double maxVal = 5.0;
-
-    for (final l in lecturas) {
-      final diffSegundos = ahora.difference(l.timestamp).inMilliseconds / 1000.0;
-      if (diffSegundos > 120.0) continue;
-
-      // El eje X va de 0 a 120 s (donde 120 es el momento actual)
-      final x = (120.0 - diffSegundos).clamp(0.0, 120.0);
-      spotsEntrada.add(FlSpot(x, l.caudalEntrada));
-      spotsSalida.add(FlSpot(x, l.caudalSalida));
-
-      maxVal = max(maxVal, max(l.caudalEntrada, l.caudalSalida));
+    for (final lectura in lecturas) {
+      final segundos = ahora.difference(lectura.timestamp).inMilliseconds / 1000.0;
+      if (segundos > 120.0) continue;
+      final x = (120.0 - segundos).clamp(0.0, 120.0).toDouble();
+      spotsEntrada.add(FlSpot(x, lectura.caudalEntrada));
+      spotsSalida.add(FlSpot(x, lectura.caudalSalida));
+      maxValor = max(maxValor, max(lectura.caudalEntrada, lectura.caudalSalida));
     }
 
-    // Ordenar spots por coordenada X ascendente (requisito de fl_chart)
     spotsEntrada.sort((a, b) => a.x.compareTo(b.x));
     spotsSalida.sort((a, b) => a.x.compareTo(b.x));
 
-    final maxY = (maxVal * 1.25).ceilToDouble();
+    if (spotsEntrada.isEmpty) {
+      return _buildEstadoVacio(theme);
+    }
 
-    return LineChart(
-      LineChartData(
-        minX: 0,
-        maxX: 120,
-        minY: 0,
-        maxY: maxY,
-        gridData: FlGridData(
-          show: true,
-          drawVerticalLine: true,
-          horizontalInterval: max(1.0, (maxY / 4).roundToDouble()),
-          verticalInterval: 30,
-          getDrawingHorizontalLine: (value) => FlLine(
-            color: theme.colorScheme.outlineVariant.withOpacity(0.4),
-            strokeWidth: 1,
-            dashArray: [4, 4],
-          ),
-          getDrawingVerticalLine: (value) => FlLine(
-            color: theme.colorScheme.outlineVariant.withOpacity(0.3),
-            strokeWidth: 1,
-            dashArray: [4, 4],
-          ),
-        ),
-        titlesData: FlTitlesData(
-          show: true,
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          bottomTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 26,
-              interval: 30,
-              getTitlesWidget: (value, meta) {
-                String texto;
-                switch (value.toInt()) {
-                  case 0:
-                    texto = '-120s';
-                    break;
-                  case 30:
-                    texto = '-90s';
-                    break;
-                  case 60:
-                    texto = '-60s';
-                    break;
-                  case 90:
-                    texto = '-30s';
-                    break;
-                  case 120:
-                    texto = 'Ahora';
-                    break;
-                  default:
-                    texto = '';
-                }
-                return Padding(
-                  padding: const EdgeInsets.only(top: 4.0),
-                  child: Text(
-                    texto,
-                    style: const TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF757575),
+    final paso = _pasoAgradable(maxValor);
+    final maxY = max(paso, (maxValor * 1.1 / paso).ceilToDouble() * paso);
+    final decimalesEje = paso < 1 ? 1 : 0;
+    final sinFlujo = actual != null &&
+        actual.caudalEntrada == 0 &&
+        actual.caudalSalida == 0;
+
+    final descripcion = actual == null
+        ? 'Gráfico de caudal sin datos.'
+        : 'Gráfico de caudal de los últimos 120 segundos. '
+            'Entrada ${numeroConComa(actual.caudalEntrada)} litros por minuto '
+            'en línea continua; salida ${numeroConComa(actual.caudalSalida)} '
+            'litros por minuto en línea discontinua.';
+
+    return Semantics(
+      label: descripcion,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: LineChart(
+              LineChartData(
+                minX: 0,
+                maxX: 120,
+                minY: 0,
+                maxY: maxY,
+                clipData: const FlClipData.all(),
+                gridData: FlGridData(
+                  show: true,
+                  drawVerticalLine: true,
+                  horizontalInterval: paso,
+                  verticalInterval: 30,
+                  getDrawingHorizontalLine: (value) => FlLine(
+                    color: theme.colorScheme.outlineVariant.withAlpha(140),
+                    strokeWidth: 1,
+                    dashArray: const [4, 4],
+                  ),
+                  getDrawingVerticalLine: (value) => FlLine(
+                    color: theme.colorScheme.outlineVariant.withAlpha(89),
+                    strokeWidth: 1,
+                    dashArray: const [4, 4],
+                  ),
+                ),
+                titlesData: FlTitlesData(
+                  show: true,
+                  topTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  rightTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 28,
+                      interval: 30,
+                      getTitlesWidget: (value, meta) {
+                        final texto = switch (value.toInt()) {
+                          0 => '-120 s',
+                          30 => '-90 s',
+                          60 => '-60 s',
+                          90 => '-30 s',
+                          120 => 'Ahora',
+                          _ => '',
+                        };
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Text(
+                            texto,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: PaletaEstados.textoSecundario,
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
-                );
-              },
-            ),
-          ),
-          leftTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 34,
-              interval: max(1.0, (maxY / 4).roundToDouble()),
-              getTitlesWidget: (value, meta) {
-                return Text(
-                  value.toStringAsFixed(0),
-                  style: const TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF757575),
+                  leftTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 42,
+                      interval: paso,
+                      getTitlesWidget: (value, meta) {
+                        return Text(
+                          numeroConComa(value, decimales: decimalesEje),
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: PaletaEstados.textoSecundario,
+                          ),
+                          textAlign: TextAlign.right,
+                        );
+                      },
+                    ),
                   ),
-                  textAlign: TextAlign.right,
-                );
-              },
+                ),
+                borderData: FlBorderData(
+                  show: true,
+                  border: Border.all(
+                    color: theme.colorScheme.outlineVariant,
+                  ),
+                ),
+                lineBarsData: [
+                  LineChartBarData(
+                    spots: spotsEntrada,
+                    isCurved: false,
+                    color: _colorEntrada,
+                    barWidth: 2.6,
+                    isStrokeCapRound: true,
+                    dotData: const FlDotData(show: false),
+                  ),
+                  LineChartBarData(
+                    spots: spotsSalida,
+                    isCurved: false,
+                    color: _colorSalida,
+                    barWidth: 2.6,
+                    isStrokeCapRound: true,
+                    dotData: const FlDotData(show: false),
+                    dashArray: const [7, 4],
+                  ),
+                ],
+                lineTouchData: LineTouchData(
+                  touchTooltipData: LineTouchTooltipData(
+                    getTooltipItems: (touchedSpots) {
+                      return touchedSpots.map((spot) {
+                        final esEntrada = spot.barIndex == 0;
+                        return LineTooltipItem(
+                          '${esEntrada ? "Entrada" : "Salida"}: '
+                          '${numeroConComa(spot.y)} L/min',
+                          TextStyle(
+                            color: esEntrada ? _colorEntrada : _colorSalida,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 11,
+                          ),
+                        );
+                      }).toList();
+                    },
+                  ),
+                ),
+              ),
             ),
           ),
-        ),
-        borderData: FlBorderData(
-          show: true,
-          border: Border.all(
-            color: theme.colorScheme.outlineVariant.withOpacity(0.5),
-          ),
-        ),
-        lineBarsData: [
-          LineChartBarData(
-            spots: spotsEntrada,
-            isCurved: false,
-            color: colorEntrada,
-            barWidth: 2.5,
-            isStrokeCapRound: true,
-            dotData: const FlDotData(show: false),
-          ),
-          LineChartBarData(
-            spots: spotsSalida,
-            isCurved: false,
-            color: colorSalida,
-            barWidth: 2.5,
-            isStrokeCapRound: true,
-            dotData: const FlDotData(show: false),
-          ),
+          if (sinFlujo)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Center(
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withAlpha(230),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: PaletaEstados.sinFlujoBorde,
+                      ),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.water_drop_outlined,
+                            size: 18, color: PaletaEstados.sinFlujo),
+                        SizedBox(width: 6),
+                        Text(
+                          'Sin flujo',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: PaletaEstados.sinFlujo,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
-        lineTouchData: LineTouchData(
-          enabled: true,
-          touchTooltipData: LineTouchTooltipData(
-            getTooltipItems: (touchedSpots) {
-              return touchedSpots.map((spot) {
-                final esEntrada = spot.barIndex == 0;
-                return LineTooltipItem(
-                  '${esEntrada ? "Qe" : "Qs"}: ${spot.y.toStringAsFixed(2)} L/min',
-                  TextStyle(
-                    color: esEntrada ? colorEntrada : colorSalida,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 11,
-                  ),
-                );
-              }).toList();
-            },
+      ),
+    );
+  }
+
+  /// Elige un intervalo de eje "redondo": 0,5, 1, 2, 5, 10, 20, 50…
+  double _pasoAgradable(double maxValor) {
+    if (maxValor <= 0) return 1;
+    final objetivo = maxValor / 4;
+    const pasos = [0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0];
+    for (final paso in pasos) {
+      if (paso >= objetivo) return paso;
+    }
+    return (objetivo / 100).ceilToDouble() * 100;
+  }
+}
+
+class _LeyendaLinea extends StatelessWidget {
+  final Color color;
+  final bool discontinua;
+  final String texto;
+
+  const _LeyendaLinea({
+    required this.color,
+    required this.discontinua,
+    required this.texto,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _MuestraLinea(color: color, discontinua: discontinua),
+        const SizedBox(width: 6),
+        Text(
+          texto,
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: PaletaEstados.textoSecundario,
           ),
         ),
-      ),
+      ],
     );
   }
 }
 
+class _MuestraLinea extends StatelessWidget {
+  final Color color;
+  final bool discontinua;
+
+  const _MuestraLinea({required this.color, required this.discontinua});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!discontinua) {
+      return Container(
+        width: 18,
+        height: 3,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(2),
+        ),
+      );
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _segmento(color),
+        const SizedBox(width: 3),
+        _segmento(color),
+        const SizedBox(width: 3),
+        _segmento(color),
+      ],
+    );
+  }
+
+  Widget _segmento(Color color) {
+    return Container(
+      width: 4,
+      height: 3,
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(2),
+      ),
+    );
+  }
+}

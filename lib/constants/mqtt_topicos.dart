@@ -14,9 +14,9 @@ class MqttTopicos {
   /// Payload: {"activo": true} o {"activo": false}
   static const String equipo = 'unt/iot/g2/riego/equipo';
 
-  /// Aviso oficial respecto a la propuesta de los tópicos de control.
+  /// Nota interna: el firmware ya implementa las órdenes de control.
+  /// La app se limita a mostrar el estado confirmado del equipo.
   static const String avisoPropuestaControl =
-      'Nota: Los tópicos de comando ("unt/iot/g2/riego/comando") y equipo '
-      '("unt/iot/g2/riego/equipo") son una propuesta técnica; '
-      'el firmware del ESP32 aún debe implementarlos.';
+      'El equipo confirma el resultado de cada orden. '
+      'La app muestra ese estado real y permite reintentar si no hay respuesta.';
 }

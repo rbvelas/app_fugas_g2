@@ -1,83 +1,60 @@
 import 'package:flutter/material.dart';
+import '../theme/paleta_estados.dart';
 
-/// Banner rojo de advertencia crítica desplegado al detectarse estado de FUGA.
+/// Aviso rojo persistente mientras el estado del equipo sea FUGA.
+/// No se puede cerrar: la alerta debe seguir visible hasta que el estado cambie.
 class AlertaFugaBanner extends StatelessWidget {
-  final VoidCallback? onCerrar;
-
-  const AlertaFugaBanner({
-    super.key,
-    this.onCerrar,
-  });
+  const AlertaFugaBanner({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFD32F2F),
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFFD32F2F).withOpacity(0.35),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.warning_rounded,
-              color: Colors.white,
-              size: 28,
-            ),
-          ),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '¡ALERTA DE FUGA CRÍTICA!',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0.5,
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: 'Alerta de fuga. La diferencia entre entrada y salida es grande. '
+          'Revisa el tramo de tubería.',
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: PaletaEstados.fuga,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Icon(Icons.warning_rounded, color: Colors.white, size: 28),
+            SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Alerta de fuga',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
-                ),
-                SizedBox(height: 2),
-                Text(
-                  'La diferencia de caudal supera el 30 % durante 3 lecturas consecutivas.',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w400,
+                  SizedBox(height: 2),
+                  Text(
+                    'La diferencia entre el agua que entra y la que sale es grande. '
+                    'Revisa el tramo de tubería.',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      height: 1.3,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          if (onCerrar != null)
-            IconButton(
-              icon: const Icon(Icons.close_rounded, color: Colors.white),
-              onPressed: onCerrar,
-              tooltip: 'Cerrar aviso',
-              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
-

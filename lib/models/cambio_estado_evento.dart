@@ -1,3 +1,4 @@
+import '../utils/formato_tiempo.dart' as tiempo;
 import 'estado_lectura.dart';
 
 /// Representa un evento de cambio de estado detectado en la telemetría del ESP32.
@@ -19,16 +20,9 @@ class CambioEstadoEvento {
     required this.diferenciaPorcentaje,
   });
 
-  /// Hora en formato Lima (UTC-5): dd/MM/yyyy HH:mm:ss (Lima, UTC-5)
-  String get horaLimaFormateada {
-    final lima = timestamp.toUtc().subtract(const Duration(hours: 5));
-    final d = lima.day.toString().padLeft(2, '0');
-    final mo = lima.month.toString().padLeft(2, '0');
-    final y = lima.year.toString();
-    final h = lima.hour.toString().padLeft(2, '0');
-    final mi = lima.minute.toString().padLeft(2, '0');
-    final s = lima.second.toString().padLeft(2, '0');
-    return '$d/$mo/$y $h:$mi:$s (Lima, UTC-5)';
-  }
-}
+  /// Hora corta de Lima (UTC-5) para la fila del historial: HH:mm:ss.
+  String get horaCortaLima => tiempo.horaCortaLima(timestamp);
 
+  /// Hora completa de Lima (UTC-5) para el detalle.
+  String get fechaHoraLimaFormateada => tiempo.fechaHoraLima(timestamp);
+}

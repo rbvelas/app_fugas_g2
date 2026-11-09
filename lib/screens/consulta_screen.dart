@@ -2,264 +2,176 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../models/cambio_estado_evento.dart';
+import '../models/conexion_estado.dart';
+import '../models/estado_lectura.dart';
 import '../providers/telemetria_provider.dart';
+import '../theme/paleta_estados.dart';
+import '../utils/formato_numeros.dart';
+import '../utils/formato_tiempo.dart';
+import '../widgets/barra_superior_aqualerta.dart';
 import '../widgets/demo_banner.dart';
 
-/// Pantalla de Consulta de la sesión activa:
-/// - Historial en memoria de cambios de estado (máximo 200 entradas).
-/// - Contador de mensajes inválidos descartados por seguridad.
-/// - Último mensaje JSON recibido en bruto.
-/// - Botón para limpiar historial.
-/// - Nota sobre almacenamiento volátil y consulta MySQL [POR COMPLETAR].
-class ConsultaScreen extends StatelessWidget {
-  const ConsultaScreen({super.key});
+enum _FiltroHistorial { todos, fugas, desviaciones }
+
+/// Pantalla de Consulta.
+///
+/// Prioriza el historial de cambios de estado. El diagnóstico (mensajes
+/// descartados y mensaje recibido) queda en una sección secundaria plegable.
+class ConsultaScreen extends StatefulWidget {
+  final VoidCallback onIrAConexion;
+
+  const ConsultaScreen({super.key, required this.onIrAConexion});
+
+  @override
+  State<ConsultaScreen> createState() => _ConsultaScreenState();
+}
+
+class _ConsultaScreenState extends State<ConsultaScreen> {
+  _FiltroHistorial _filtro = _FiltroHistorial.todos;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final provider = context.watch<TelemetriaProvider>();
     final historial = provider.historialCambiosEstado;
-    final ultimoBruto = provider.ultimoMensajeBruto;
-    final descartados = provider.mensajesDescartados;
+    final conectado = provider.estadoConexion == ConexionEstado.conectado;
+    final filtrado = _aplicarFiltro(historial);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Consulta y Diagnóstico',
-              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
-            ),
-            Text(
-              'Historial volátil y auditoría de mensajes',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w400),
-            ),
-          ],
-        ),
-        actions: [
+      appBar: BarraSuperiorAqualerta(
+        titulo: 'Consulta',
+        onIrAConexion: widget.onIrAConexion,
+        acciones: [
           if (historial.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(right: 8.0),
-              child: TextButton.icon(
-                style: TextButton.styleFrom(
-                  minimumSize: const Size(48, 48), // Requisito botones ≥ 48 dp
-                  foregroundColor: const Color(0xFFD32F2F),
-                ),
-                icon: const Icon(Icons.delete_sweep_rounded),
-                label: const Text('Limpiar'),
-                onPressed: () {
-                  _mostrarDialogoLimpiar(context, provider);
-                },
-              ),
+            IconButton(
+              tooltip: 'Limpiar historial',
+              icon: const Icon(Icons.delete_outline_rounded),
+              onPressed: () => _confirmarLimpiar(provider),
             ),
         ],
       ),
       body: Column(
         children: [
           if (provider.modoDemoActivo) const DemoBanner(),
-
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16.0),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 1. Tarjeta de mensajes descartados por validación de seguridad
-                  _buildTarjetaDescartados(theme, descartados),
-
-                  const SizedBox(height: 16),
-
-                  // 2. Tarjeta con el último mensaje recibido en bruto
-                  _buildUltimoMensajeBrutoCard(context, theme, ultimoBruto),
-
-                  const SizedBox(height: 20),
-
-                  // 3. Historial de cambios de estado
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'CAMBIOS DE ESTADO (${historial.length}/200)',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.8,
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                      if (historial.isNotEmpty)
-                        Text(
-                          'Más recientes primero',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: theme.colorScheme.outline,
+                      Expanded(
+                        child: Text(
+                          'Historial de cambios',
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
+                      ),
+                      const SizedBox(width: 8),
+                      const Padding(
+                        padding: EdgeInsets.only(top: 4),
+                        child: Text(
+                          'Hora de Lima (UTC-5)',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: PaletaEstados.textoSecundario,
+                          ),
+                        ),
+                      ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-
-                  if (historial.isEmpty)
-                    _buildHistorialVacio(theme)
-                  else
-                    _buildListaHistorial(historial),
-
-                  const SizedBox(height: 24),
-
-                  // 4. Aclaración obligatoria sobre memoria volátil y MySQL [POR COMPLETAR]
-                  _buildAclaracionMemoriaYMysql(theme),
-
-                  const SizedBox(height: 16),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTarjetaDescartados(ThemeData theme, int descartados) {
-    final tieneDescartes = descartados > 0;
-    final colorBorde = tieneDescartes ? const Color(0xFFE65100) : const Color(0xFF2E7D32);
-    final colorFondo = tieneDescartes ? const Color(0xFFFFF3E0) : const Color(0xFFE8F5E9);
-    final colorTexto = tieneDescartes ? const Color(0xFFBF360C) : const Color(0xFF1B5E20);
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: colorFondo,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colorBorde.withOpacity(0.5), width: 1.2),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: colorBorde.withOpacity(0.15),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              tieneDescartes ? Icons.security_update_warning_rounded : Icons.verified_user_rounded,
-              color: colorBorde,
-              size: 22,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'VALIDACIÓN DE SEGURIDAD Y TIPOS',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.6,
-                    color: Color(0xFF616161),
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'Mensajes descartados: $descartados',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                    color: colorTexto,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                const Text(
-                  'Filtra caudales negativos, variaciones fuera de ±100 %, estados ajenos o RSSI fuera de [-120, 0].',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Color(0xFF424242),
-                    height: 1.25,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildUltimoMensajeBrutoCard(
-    BuildContext context,
-    ThemeData theme,
-    String? ultimoBruto,
-  ) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF212121),
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Row(
-                children: [
-                  Icon(Icons.terminal_rounded, size: 18, color: Color(0xFF64B5F6)),
-                  SizedBox(width: 8),
-                  Text(
-                    'ÚLTIMO MENSAJE EN BRUTO',
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Primero aparece lo más reciente.',
                     style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.8,
-                      color: Color(0xFFB0BEC5),
+                      color: PaletaEstados.textoSecundario,
+                      fontSize: 12,
                     ),
                   ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: [
+                      _chipFiltro(
+                        'Todos',
+                        _FiltroHistorial.todos,
+                        theme,
+                      ),
+                      _chipFiltro(
+                        'Fugas',
+                        _FiltroHistorial.fugas,
+                        theme,
+                      ),
+                      _chipFiltro(
+                        'Desviaciones',
+                        _FiltroHistorial.desviaciones,
+                        theme,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  if (historial.isEmpty)
+                    _EstadoVacioHistorial(
+                      titulo: 'Aún no hay cambios de estado',
+                      detalle: conectado
+                          ? 'Cuando el equipo cambie de estado, lo verás aquí.'
+                          : 'Conéctate al servidor para empezar a recibir datos.',
+                      icono: Icons.history_toggle_off_rounded,
+                      accion: conectado
+                          ? null
+                          : _BotonIrAConexion(
+                              onIrAConexion: widget.onIrAConexion,
+                            ),
+                    )
+                  else if (filtrado.isEmpty)
+                    _EstadoVacioHistorial(
+                      titulo: 'No hay cambios de este tipo',
+                      detalle: 'Prueba con otro filtro para ver todo el historial.',
+                      icono: Icons.filter_alt_off_rounded,
+                      accion: TextButton(
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(48, 48),
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _filtro = _FiltroHistorial.todos;
+                          });
+                        },
+                        child: const Text('Ver todos'),
+                      ),
+                    )
+                  else
+                    ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: filtrado.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      itemBuilder: (context, index) {
+                        final evento = filtrado[index];
+                        final indice = historial.indexOf(evento);
+                        final duracion = indice > 0
+                            ? evento.timestamp
+                                .difference(historial[indice - 1].timestamp)
+                            : null;
+                        return _EventoCard(
+                          evento: evento,
+                          duracionEstadoAnterior: duracion,
+                        );
+                      },
+                    ),
+                  const SizedBox(height: 20),
+                  _SeccionDiagnostico(
+                    descartados: provider.mensajesDescartados,
+                    ultimoMensaje: provider.ultimoMensajeBruto,
+                  ),
+                  const SizedBox(height: 12),
+                  const _SeccionAcercaDe(),
                 ],
               ),
-              if (ultimoBruto != null)
-                IconButton(
-                  icon: const Icon(Icons.copy_rounded, size: 18, color: Colors.white70),
-                  tooltip: 'Copiar payload',
-                  constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                  onPressed: () {
-                    Clipboard.setData(ClipboardData(text: ultimoBruto));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Payload copiado al portapapeles'),
-                        duration: Duration(seconds: 2),
-                      ),
-                    );
-                  },
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: const Color(0xFF121212),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: SelectableText(
-              ultimoBruto ?? 'sin datos (ningún mensaje recibido aún)',
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 12,
-                color: ultimoBruto != null ? const Color(0xFF81C784) : const Color(0xFF757575),
-              ),
             ),
           ),
         ],
@@ -267,130 +179,204 @@ class ConsultaScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildHistorialVacio(ThemeData theme) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 16),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: theme.colorScheme.outlineVariant.withOpacity(0.4)),
+  Widget _chipFiltro(
+    String etiqueta,
+    _FiltroHistorial valor,
+    ThemeData theme,
+  ) {
+    return ChoiceChip(
+      label: Text(etiqueta),
+      selected: _filtro == valor,
+      showCheckmark: true,
+      materialTapTargetSize: MaterialTapTargetSize.padded,
+      selectedColor: theme.colorScheme.secondaryContainer,
+      labelStyle: TextStyle(
+        fontWeight: FontWeight.w700,
+        color: _filtro == valor
+            ? theme.colorScheme.onSecondaryContainer
+            : PaletaEstados.textoSecundario,
       ),
-      child: Column(
-        children: [
-          Icon(
-            Icons.history_toggle_off_rounded,
-            size: 40,
-            color: theme.colorScheme.outline.withOpacity(0.6),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'Sin cambios de estado registrados',
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w700,
-              color: theme.colorScheme.onSurface,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Solo se añaden entradas cuando el firmware transiciona entre estados '
-            '(NORMAL, DESVIACION, FUGA, SIN_FLUJO).',
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.outline,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildListaHistorial(List<CambioEstadoEvento> historial) {
-    final itemsInversos = historial.reversed.toList();
-
-    return ListView.separated(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: itemsInversos.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        final evento = itemsInversos[index];
-        return _buildEventoCard(context, evento);
+      onSelected: (_) {
+        setState(() {
+          _filtro = valor;
+        });
       },
     );
   }
 
-  Widget _buildEventoCard(BuildContext context, CambioEstadoEvento evento) {
-    final theme = Theme.of(context);
+  List<CambioEstadoEvento> _aplicarFiltro(List<CambioEstadoEvento> historial) {
+    final inverso = historial.reversed.toList();
+    switch (_filtro) {
+      case _FiltroHistorial.todos:
+        return inverso;
+      case _FiltroHistorial.fugas:
+        return inverso
+            .where((e) => e.estadoNuevo == EstadoLectura.fuga)
+            .toList();
+      case _FiltroHistorial.desviaciones:
+        return inverso
+            .where((e) => e.estadoNuevo == EstadoLectura.desviacion)
+            .toList();
+    }
+  }
 
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: evento.estadoNuevo.color.withOpacity(0.35),
-          width: 1.2,
+  void _confirmarLimpiar(TelemetriaProvider provider) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Limpiar historial'),
+        content: const Text(
+          '¿Vaciar el historial de cambios de esta sesión?',
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.02),
-            blurRadius: 4,
-            offset: const Offset(0, 1),
+        actions: [
+          TextButton(
+            style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(minimumSize: const Size(48, 48)),
+            onPressed: () {
+              provider.limpiarHistorialCambios();
+              Navigator.pop(ctx);
+            },
+            child: const Text('Vaciar'),
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    );
+  }
+}
+
+class _EventoCard extends StatelessWidget {
+  final CambioEstadoEvento evento;
+  final Duration? duracionEstadoAnterior;
+
+  const _EventoCard({
+    required this.evento,
+    required this.duracionEstadoAnterior,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final duracion = duracionEstadoAnterior == null
+        ? '—'
+        : formatearDuracion(duracionEstadoAnterior!);
+    final valores =
+        'Entrada ${numeroConComa(evento.caudalEntrada)} L/min · '
+        'Salida ${numeroConComa(evento.caudalSalida)} L/min · '
+        'Diferencia ${porcentajeConComa(evento.diferenciaPorcentaje)}';
+
+    return Semantics(
+      container: true,
+      label: 'A las ${evento.horaCortaLima}, cambió de '
+          '${evento.estadoAnterior.etiqueta} a ${evento.estadoNuevo.etiqueta}. '
+          'El estado anterior duró $duracion. $valores.',
+      excludeSemantics: true,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: evento.estadoNuevo.color.withAlpha(89),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              spacing: 12,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  evento.horaCortaLima,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: PaletaEstados.textoSecundario,
+                  ),
+                ),
+                _ChipDuracion(texto: 'Duró $duracion'),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _BadgeEstado(estado: evento.estadoAnterior),
+                const Icon(
+                  Icons.arrow_forward_rounded,
+                  size: 16,
+                  color: PaletaEstados.textoSecundario,
+                ),
+                _BadgeEstado(estado: evento.estadoNuevo),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              valores,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: PaletaEstados.textoSecundario,
+                height: 1.35,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChipDuracion extends StatelessWidget {
+  final String texto;
+
+  const _ChipDuracion({required this.texto});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: PaletaEstados.pausaFondo,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                evento.horaLimaFormateada,
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF616161),
-                ),
-              ),
-              Text(
-                'Δ ${evento.diferenciaPorcentaje.toStringAsFixed(1)} %',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                  color: evento.estadoNuevo.color,
-                ),
-              ),
-            ],
+          const Icon(
+            Icons.timer_outlined,
+            size: 13,
+            color: PaletaEstados.textoSecundario,
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              _buildBadgeEstado(evento.estadoAnterior),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8.0),
-                child: Icon(Icons.arrow_forward_rounded, size: 16, color: Color(0xFF757575)),
-              ),
-              _buildBadgeEstado(evento.estadoNuevo),
-            ],
-          ),
-          const SizedBox(height: 8),
+          const SizedBox(width: 4),
           Text(
-            'Qe: ${evento.caudalEntrada.toStringAsFixed(2)} L/min  •  '
-            'Qs: ${evento.caudalSalida.toStringAsFixed(2)} L/min',
+            texto,
             style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: Color(0xFF424242),
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: PaletaEstados.textoSecundario,
             ),
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildBadgeEstado(dynamic estado) {
+class _BadgeEstado extends StatelessWidget {
+  final EstadoLectura estado;
+
+  const _BadgeEstado({required this.estado});
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
@@ -401,7 +387,7 @@ class ConsultaScreen extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(estado.icono, size: 13, color: estado.color),
+          Icon(estado.icono, size: 14, color: estado.color),
           const SizedBox(width: 4),
           Text(
             estado.etiqueta,
@@ -415,72 +401,313 @@ class ConsultaScreen extends StatelessWidget {
       ),
     );
   }
+}
 
-  Widget _buildAclaracionMemoriaYMysql(ThemeData theme) {
+class _EstadoVacioHistorial extends StatelessWidget {
+  final String titulo;
+  final String detalle;
+  final IconData icono;
+  final Widget? accion;
+
+  const _EstadoVacioHistorial({
+    required this.titulo,
+    required this.detalle,
+    required this.icono,
+    this.accion,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.all(14),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
       decoration: BoxDecoration(
-        color: theme.colorScheme.surface.withOpacity(0.6),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: theme.colorScheme.outlineVariant.withOpacity(0.4)),
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(Icons.info_outline_rounded, size: 18, color: theme.colorScheme.primary),
-              const SizedBox(width: 8),
-              Text(
-                'ALCANCE Y PERSISTENCIA DE DATOS',
-                style: theme.textTheme.labelMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  color: theme.colorScheme.primary,
-                  letterSpacing: 0.6,
+          Icon(icono, size: 40, color: theme.colorScheme.outline),
+          const SizedBox(height: 10),
+          Text(
+            titulo,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            detalle,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: PaletaEstados.textoSecundario,
+              height: 1.35,
+            ),
+          ),
+          if (accion != null) ...[
+            const SizedBox(height: 12),
+            accion!,
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _BotonIrAConexion extends StatelessWidget {
+  final VoidCallback onIrAConexion;
+
+  const _BotonIrAConexion({required this.onIrAConexion});
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton.tonalIcon(
+      style: FilledButton.styleFrom(minimumSize: const Size(48, 48)),
+      onPressed: onIrAConexion,
+      icon: const Icon(Icons.settings_input_antenna_rounded),
+      label: const Text('Ir a Conexión'),
+    );
+  }
+}
+
+class _SeccionDiagnostico extends StatelessWidget {
+  final int descartados;
+  final String? ultimoMensaje;
+
+  const _SeccionDiagnostico({
+    required this.descartados,
+    required this.ultimoMensaje,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.monitor_heart_outlined,
+                  size: 20,
+                  color: PaletaEstados.textoSecundario,
                 ),
-              ),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text(
+                    'Diagnóstico',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    descartados == 0
+                        ? 'Ningún mensaje descartado'
+                        : '$descartados descartados',
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: PaletaEstados.textoSecundario,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          ExpansionTile(
+            shape: const Border(),
+            collapsedShape: const Border(),
+            leading: const Icon(
+              Icons.code_rounded,
+              color: PaletaEstados.textoSecundario,
+            ),
+            title: const Text(
+              'Ver último mensaje',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+            children: [
+              if (ultimoMensaje == null)
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      'Aún no se recibió ningún mensaje.',
+                      style: TextStyle(color: PaletaEstados.textoSecundario),
+                    ),
+                  ),
+                )
+              else
+                _PanelMensajeBruto(mensaje: ultimoMensaje!),
             ],
           ),
-          const SizedBox(height: 8),
-          const Text(
-            '• Este historial se almacena exclusivamente en la memoria RAM de la sesión activa y se pierde por completo al cerrar la aplicación.\n'
-            '• No consulta la base de datos MySQL histórica [POR COMPLETAR], dado que dicha funcionalidad requiere una API REST backend que actualmente no existe en la infraestructura del proyecto.',
-            style: TextStyle(
-              fontSize: 12,
-              height: 1.4,
-              color: Color(0xFF424242),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(14, 0, 14, 12),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Los mensajes con valores fuera de rango se descartan automáticamente.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: PaletaEstados.textoSecundario,
+                  height: 1.3,
+                ),
+              ),
             ),
           ),
         ],
       ),
     );
   }
+}
 
-  void _mostrarDialogoLimpiar(BuildContext context, TelemetriaProvider provider) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Limpiar historial'),
-        content: const Text(
-          '¿Desea vaciar el historial de cambios de estado registrado durante esta sesión?',
-        ),
-        actions: [
-          TextButton(
-            style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancelar'),
+class _PanelMensajeBruto extends StatelessWidget {
+  final String mensaje;
+
+  const _PanelMensajeBruto({required this.mensaje});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Último mensaje recibido',
+                  style: TextStyle(
+                    color: Color(0xFFB0BEC5),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Copiar mensaje',
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                icon: const Icon(
+                  Icons.copy_rounded,
+                  size: 18,
+                  color: Colors.white70,
+                ),
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: mensaje));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Mensaje copiado'),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                },
+              ),
+            ],
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              minimumSize: const Size(48, 48),
-              backgroundColor: const Color(0xFFD32F2F),
-              foregroundColor: Colors.white,
+          SelectableText(
+            mensaje,
+            style: const TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 12,
+              color: Color(0xFFB9F6CA),
             ),
-            onPressed: () {
-              provider.limpiarHistorialCambios();
-              Navigator.pop(ctx);
-            },
-            child: const Text('Vaciar historial'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SeccionAcercaDe extends StatelessWidget {
+  const _SeccionAcercaDe();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: const ExpansionTile(
+        shape: Border(),
+        collapsedShape: Border(),
+        leading: Icon(
+          Icons.info_outline_rounded,
+          color: PaletaEstados.textoSecundario,
+        ),
+        title: Text(
+          'Acerca de',
+          style: TextStyle(fontWeight: FontWeight.w800),
+        ),
+        childrenPadding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Este historial se guarda mientras la app está abierta. '
+              'Si la cierras, se borra.',
+              style: TextStyle(
+                color: PaletaEstados.textoSecundario,
+                height: 1.4,
+              ),
+            ),
+          ),
+          SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Se guardan como máximo 200 cambios. La hora se muestra en '
+              'zona de Lima (UTC-5).',
+              style: TextStyle(
+                color: PaletaEstados.textoSecundario,
+                height: 1.4,
+              ),
+            ),
+          ),
+          SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'No se consulta una base de datos histórica externa. '
+              '[POR COMPLETAR]',
+              style: TextStyle(
+                color: PaletaEstados.textoSecundario,
+                height: 1.4,
+              ),
+            ),
+          ),
+          SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Por seguridad se descartan los mensajes con caudales negativos, '
+              'diferencias fuera de ±100 %, estados desconocidos o señal WiFi '
+              'fuera del rango válido.',
+              style: TextStyle(
+                color: PaletaEstados.textoSecundario,
+                height: 1.4,
+              ),
+            ),
           ),
         ],
       ),

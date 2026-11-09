@@ -1,183 +1,358 @@
 import 'package:flutter/material.dart';
 import '../models/estado_lectura.dart';
+import '../theme/paleta_estados.dart';
+import '../utils/formato_tiempo.dart';
 
-/// Semáforo visual del estado de fuga según el cálculo del firmware:
-/// - NORMAL: Verde (check)
-/// - DESVIACIÓN: Amarillo (advertencia)
-/// - FUGA: Rojo (error crítico)
-/// - SIN FLUJO: Azul (gota/ondas)
-/// - SIN DATOS: Gris (sin telemetría reciente > 4 s)
+/// Tarjeta principal de Monitoreo.
+///
+/// Prioriza tres situaciones:
+/// 1. El equipo está en pausa: "Circuito en pausa" con acción "Reanudar".
+/// 2. No hay datos recientes: explicación y acción para ir a Conexión.
+/// 3. Hay una lectura: estado grande con color + icono + texto.
 class SemaforoWidget extends StatelessWidget {
   final EstadoLectura? estado;
   final bool hayDatosRecientes;
+  final bool enPausa;
+  final bool esperandoConfirmacion;
+  final bool confirmacionExpirada;
+  final bool conectado;
+  final bool esDemo;
+  final DateTime? ultimaLecturaTimestamp;
+  final VoidCallback? onReanudar;
+  final VoidCallback? onIrAConexion;
 
   const SemaforoWidget({
     super.key,
     required this.estado,
     required this.hayDatosRecientes,
+    required this.enPausa,
+    required this.esperandoConfirmacion,
+    required this.confirmacionExpirada,
+    required this.conectado,
+    required this.esDemo,
+    this.ultimaLecturaTimestamp,
+    this.onReanudar,
+    this.onIrAConexion,
   });
 
   @override
   Widget build(BuildContext context) {
-    final bool activo = hayDatosRecientes && estado != null;
-    final Color colorPrincipal = activo ? estado!.color : const Color(0xFF616161);
-    final Color colorFondo = activo ? estado!.colorFondo : const Color(0xFFF5F5F5);
-    final Color colorBorde = activo ? estado!.colorBorde : const Color(0xFFE0E0E0);
-    final IconData icono = activo ? estado!.icono : Icons.sensors_off_rounded;
-    final String titulo = activo ? estado!.etiqueta : 'SIN DATOS';
-    final String descripcion = activo
-        ? estado!.descripcion
-        : 'Sin recepción de telemetría activa (> 4 s sin mensajes).';
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: colorFondo,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: colorBorde, width: 2),
-        boxShadow: [
-          BoxShadow(
-            color: colorPrincipal.withOpacity(0.08),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              // Indicador luminoso circular con icono
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: colorPrincipal,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: colorPrincipal.withOpacity(0.4),
-                      blurRadius: 8,
-                      spreadRadius: 1,
-                    ),
-                  ],
-                ),
-                child: Icon(
-                  icono,
-                  color: Colors.white,
-                  size: 28,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'ESTADO DEL SISTEMA (FIRMWARE)',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.8,
-                        color: Color(0xFF757575),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      titulo,
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w900,
-                        color: colorPrincipal,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              // Mini indicadores de estados posibles (estilo semáforo industrial)
-              _buildMiniSemaforo(estado, activo),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            descripcion,
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              color: Color(0xFF424242),
-              height: 1.25,
-            ),
-          ),
-        ],
-      ),
-    );
+    if (enPausa) {
+      return _buildPausa(context);
+    }
+    final activo = hayDatosRecientes && estado != null;
+    if (!activo) {
+      return _buildSinDatos(context);
+    }
+    return _buildEstado(context, estado!);
   }
 
-  Widget _buildMiniSemaforo(EstadoLectura? estadoActual, bool activo) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.06),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _miniDot(
-            const Color(0xFF2E7D32),
-            activo && estadoActual == EstadoLectura.normal,
-            'NORMAL',
-          ),
-          const SizedBox(width: 6),
-          _miniDot(
-            const Color(0xFFF57F17),
-            activo && estadoActual == EstadoLectura.desviacion,
-            'DESV',
-          ),
-          const SizedBox(width: 6),
-          _miniDot(
-            const Color(0xFFD32F2F),
-            activo && estadoActual == EstadoLectura.fuga,
-            'FUGA',
-          ),
-          const SizedBox(width: 6),
-          _miniDot(
-            const Color(0xFF1976D2),
-            activo && estadoActual == EstadoLectura.sinFlujo,
-            'S/FLUJO',
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _miniDot(Color color, bool estaEncendido, String tooltip) {
-    return Tooltip(
-      message: tooltip,
+  Widget _buildEstado(BuildContext context, EstadoLectura valor) {
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: 'Estado: ${valor.etiqueta}. ${valor.descripcion}',
       child: Container(
-        width: 12,
-        height: 12,
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          color: estaEncendido ? color : color.withOpacity(0.2),
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: estaEncendido ? Colors.white : Colors.transparent,
-            width: 1.5,
-          ),
-          boxShadow: estaEncendido
-              ? [
-                  BoxShadow(
-                    color: color.withOpacity(0.6),
-                    blurRadius: 4,
+          color: valor.colorFondo,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: valor.colorBorde, width: 2),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Estado',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: PaletaEstados.textoSecundario,
+                letterSpacing: 0.2,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: valor.color,
+                    shape: BoxShape.circle,
                   ),
-                ]
-              : null,
+                  child: Icon(valor.icono, color: Colors.white, size: 32),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    valor.etiqueta,
+                    style: TextStyle(
+                      fontSize: 30,
+                      height: 1.05,
+                      fontWeight: FontWeight.w900,
+                      color: valor.color,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              valor.descripcion,
+              style: const TextStyle(
+                fontSize: 14,
+                height: 1.35,
+                color: PaletaEstados.textoSecundario,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPausa(BuildContext context) {
+    final theme = Theme.of(context);
+    final esperando = esperandoConfirmacion;
+    final expirada = confirmacionExpirada && !esperando;
+    final puedeReanudar = conectado && !esperando && onReanudar != null;
+
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: 'Circuito en pausa. El equipo no mide ni publica datos. '
+          'El agua sigue fluyendo.',
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: PaletaEstados.pausaFondo,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: PaletaEstados.pausaBorde, width: 2),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Estado',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: PaletaEstados.textoSecundario,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: const BoxDecoration(
+                    color: PaletaEstados.pausa,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.pause_circle_filled_rounded,
+                    color: Colors.white,
+                    size: 34,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                const Expanded(
+                  child: Text(
+                    'Circuito en pausa',
+                    style: TextStyle(
+                      fontSize: 26,
+                      height: 1.1,
+                      fontWeight: FontWeight.w900,
+                      color: PaletaEstados.pausa,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'El equipo no está midiendo ni publicando datos. '
+              'El agua sigue fluyendo.',
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.35,
+                color: PaletaEstados.textoSecundario,
+              ),
+            ),
+            if (esperando) ...[
+              const SizedBox(height: 14),
+              Semantics(
+                liveRegion: true,
+                label: 'Reanudando. Esperando confirmación del equipo.',
+                child: Row(
+                  children: [
+                    const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2.2),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Reanudando… esperando confirmación',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: PaletaEstados.pausa,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ] else if (expirada) ...[
+              const SizedBox(height: 12),
+              Text(
+                'No se recibió confirmación. Revisa que el equipo esté encendido y conectado.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: PaletaEstados.desviacion,
+                  fontWeight: FontWeight.w600,
+                  height: 1.3,
+                ),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(48, 48),
+                  foregroundColor: PaletaEstados.pausa,
+                  side: const BorderSide(color: PaletaEstados.pausa),
+                ),
+                onPressed: puedeReanudar ? onReanudar : null,
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Reintentar'),
+              ),
+            ] else if (puedeReanudar) ...[
+              const SizedBox(height: 14),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(48, 52),
+                  backgroundColor: PaletaEstados.normal,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: onReanudar,
+                icon: const Icon(Icons.play_arrow_rounded),
+                label: const Text('Reanudar'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSinDatos(BuildContext context) {
+    final theme = Theme.of(context);
+    final String titulo;
+    final String detalle;
+    final Widget accion;
+
+    if (esDemo) {
+      titulo = 'Cargando datos de ejemplo…';
+      detalle = 'La demostración empezará en un momento.';
+      accion = const Padding(
+        padding: EdgeInsets.only(top: 12),
+        child: LinearProgressIndicator(minHeight: 6),
+      );
+    } else if (!conectado) {
+      titulo = 'Sin datos';
+      detalle = 'Conéctate al servidor para empezar a recibir lecturas.';
+      accion = Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: FilledButton.tonalIcon(
+          style: FilledButton.styleFrom(minimumSize: const Size(48, 48)),
+          onPressed: onIrAConexion,
+          icon: const Icon(Icons.settings_input_antenna_rounded),
+          label: const Text('Ir a Conexión'),
+        ),
+      );
+    } else {
+      titulo = 'Esperando datos…';
+      detalle = ultimaLecturaTimestamp == null
+          ? 'El equipo aún no ha enviado lecturas. Revisa que esté encendido.'
+          : 'La última lectura fue ${antiguedadRelativa(ultimaLecturaTimestamp!)}. '
+              'Revisa que el equipo esté encendido y conectado.';
+      accion = Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: TextButton.icon(
+          style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
+          onPressed: onIrAConexion,
+          icon: const Icon(Icons.settings_input_antenna_rounded),
+          label: const Text('Ver conexión'),
+        ),
+      );
+    }
+
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: '$titulo. $detalle',
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: PaletaEstados.pausaFondo,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: PaletaEstados.pausaBorde, width: 2),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: const BoxDecoration(
+                    color: PaletaEstados.pausa,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    esDemo ? Icons.science_rounded : Icons.sensors_off_rounded,
+                    color: Colors.white,
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        titulo,
+                        style: const TextStyle(
+                          fontSize: 24,
+                          height: 1.1,
+                          fontWeight: FontWeight.w900,
+                          color: PaletaEstados.pausa,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        detalle,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: PaletaEstados.textoSecundario,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            accion,
+          ],
         ),
       ),
     );
   }
 }
-

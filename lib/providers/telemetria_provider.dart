@@ -182,6 +182,10 @@ class TelemetriaProvider with ChangeNotifier {
   void _procesarEstadoEquipo(bool activo) {
     _equipoActivo = activo;
 
+    // Cualquier estado reportado por el equipo es una confirmación válida:
+    // si el aviso llegó tarde, ya no tiene sentido seguir mostrando "sin confirmar".
+    _confirmacionExpirada = false;
+
     // Si estábamos esperando confirmación de una orden previa
     if (_esperandoConfirmacion && _ordenPendiente != null) {
       final orden = _ordenPendiente!;
@@ -380,6 +384,12 @@ class TelemetriaProvider with ChangeNotifier {
       return false;
     }
 
+    // Una nueva sesión no conserva órdenes pendientes de la anterior.
+    _temporizadorConfirmacion?.cancel();
+    _esperandoConfirmacion = false;
+    _confirmacionExpirada = false;
+    _ordenPendiente = null;
+
     _host = host.trim();
     _puerto = puerto;
     _usuario = ValidadorConexion.limpiarUsuario(usuario);
@@ -416,6 +426,7 @@ class TelemetriaProvider with ChangeNotifier {
     _equipoActivo = null;
     _esperandoConfirmacion = false;
     _confirmacionExpirada = false;
+    _ordenPendiente = null;
     _temporizadorConfirmacion?.cancel();
     notifyListeners();
   }

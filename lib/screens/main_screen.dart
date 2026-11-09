@@ -4,11 +4,8 @@ import 'consulta_screen.dart';
 import 'control_screen.dart';
 import 'monitoreo_screen.dart';
 
-/// Pantalla principal que alberga la barra de navegación inferior con las 4 secciones:
-/// 1. Monitoreo: telemetría en tiempo real y gráfico de 120 s.
-/// 2. Consulta: historial de cambios de estado y último payload en bruto.
-/// 3. Control: envío de comandos PAUSAR / REANUDAR al ESP32.
-/// 4. Conexión: configuración de red MQTT EMQX y modo DEMO.
+/// Pantalla principal con la barra de navegación inferior de 4 secciones:
+/// Monitoreo, Consulta, Control y Conexión.
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
 
@@ -27,16 +24,19 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   Widget build(BuildContext context) {
+    void irAConexion() => _navegarAIndice(3);
+
     return Scaffold(
       body: IndexedStack(
         index: _indiceSeleccionado,
         children: [
-          MonitoreoScreen(
-            onIrAConexion: () => _navegarAIndice(3), // Navega a la pestaña Conexión
+          MonitoreoScreen(onIrAConexion: irAConexion),
+          ConsultaScreen(onIrAConexion: irAConexion),
+          ControlScreen(onIrAConexion: irAConexion),
+          ConexionScreen(
+            onIrAConexion: irAConexion,
+            visible: _indiceSeleccionado == 3,
           ),
-          const ConsultaScreen(),
-          const ControlScreen(),
-          const ConexionScreen(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -47,25 +47,25 @@ class _MainScreenState extends State<MainScreen> {
             icon: Icon(Icons.speed_outlined),
             selectedIcon: Icon(Icons.speed_rounded),
             label: 'Monitoreo',
-            tooltip: 'Telemetría en tiempo real',
+            tooltip: 'Estado y caudales en tiempo real',
           ),
           NavigationDestination(
             icon: Icon(Icons.manage_search_outlined),
             selectedIcon: Icon(Icons.manage_search_rounded),
             label: 'Consulta',
-            tooltip: 'Historial de cambios y datos brutos',
+            tooltip: 'Historial de cambios de estado',
           ),
           NavigationDestination(
             icon: Icon(Icons.tune_outlined),
             selectedIcon: Icon(Icons.tune_rounded),
             label: 'Control',
-            tooltip: 'Pausa y reanudación del circuito',
+            tooltip: 'Pausar o reanudar la medición',
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_input_antenna_outlined),
             selectedIcon: Icon(Icons.settings_input_antenna_rounded),
             label: 'Conexión',
-            tooltip: 'Configuración de broker y demo',
+            tooltip: 'Configurar la conexión',
           ),
         ],
       ),

@@ -1,123 +1,206 @@
-# Aqualerta - Detección Temprana de Fugas de Agua con IoT
+# Aqualerta — Detección temprana de fugas de agua con IoT
 
-Aplicación móvil desarrollada en Flutter para la supervisión y control del sistema de detección temprana de fugas de agua en tramos de tubería y riego, como parte del curso de Internet de las Cosas de la Escuela Profesional de Ingeniería de Sistemas (Universidad Nacional de Trujillo).
+Aplicación móvil en Flutter para supervisar y controlar un tramo de tubería con un nodo **ESP32** y dos sensores de caudal. Aqualerta avisa cuando la diferencia entre el agua que entra y la que sale indica una posible fuga, y permite pausar o reanudar la medición del equipo.
 
----
-
-## 1. Descripción del Sistema
-
-Aqualerta permite supervisar en tiempo real la telemetría enviada por un nodo sensor **ESP32** equipado con dos sensores de caudal por pulsos **YF-S201** instalados a la entrada ($Q_e$) y salida ($Q_s$) de un tramo hidráulico.
-
-El firmware del microcontrolador calcula localmente el estado operativo:
-- **NORMAL**: Flujo de agua dentro de los parámetros regulares.
-- **DESVIACION**: Diferencia de caudal $\ge 15\text{ \%}$ sostenida durante 3 lecturas continuas.
-- **FUGA**: Diferencia de caudal $\ge 30\text{ \%}$ sostenida durante 3 lecturas continuas (fuga crítica).
-- **SIN_FLUJO**: Ambos sensores registran caudales menores a $0{,}5\text{ L/min}$.
-
-La aplicación **no recalcula el estado**; lo representa visualmente mediante un semáforo de alta visibilidad, alerta háptica y notificaciones críticas.
+El diseño está pensado para estudiantes y personal no técnico: el estado se entiende de un vistazo y siempre combina **color + icono + texto**.
 
 ---
 
-## 2. Arquitectura de Comunicación y Tópicos MQTT
+## 1. Qué muestra la app
 
-La aplicación se comunica con un broker **EMQX 5.8.6**. Los tópicos y formatos de mensaje se distribuyen de la siguiente manera:
+| Estado | Significado para el usuario | Color e icono |
+| :--- | :--- | :--- |
+| **Normal** | El agua circula como se espera. | Verde + check |
+| **Desviación** | Hay una diferencia moderada; conviene revisar la tubería. | Ámbar + triángulo de advertencia |
+| **Fuga** | La diferencia es grande; hay que revisar el tramo cuanto antes. | Rojo + señal de error |
+| **Sin flujo** | No está pasando agua por el tramo. | Azul + gota |
+| **En pausa** | El equipo no mide ni publica datos; el agua sigue fluyendo. | Gris + pausa |
+| **Sin datos** | Todavía no hay lecturas o la conexión está caída. | Gris + sensor apagado |
 
-| Tópico | Dirección | QoS | Estado en el Sistema | Formato de Payload / Descripción |
+La app **no recalcula** el estado: representa el que calcula el firmware del ESP32.
+
+---
+
+## 2. Cambios de interfaz: Antes → Después
+
+| Pantalla | Antes | Después |
+| :--- | :--- | :--- |
+| Control | El botón se bloqueaba 2 s por un temporizador, sin mirar el estado real. | Los botones se habilitan según el estado confirmado del equipo. |
+| Control | «Pausar circuito» y «Reanudar circuito» con tamaños y énfasis distintos. | «Pausar» y «Reanudar», misma fila, misma altura (≥ 52 dp), uno habilitado a la vez. |
+| Control | Confirmación para pausar y reanudar. | Confirmación solo para pausar; reanudar va directo. |
+| Control | Al enviar una orden no se veía progreso. | «Esperando confirmación del equipo…» con indicador de progreso y botones deshabilitados. |
+| Control | Tras 5 s sin respuesta, la pantalla quedaba bloqueada. | Mensaje claro y botón «Reintentar»; no se deja al usuario sin salida. |
+| Control | Recuadro «Propuesta de arquitectura IoT» con jerga. | Nota breve: el equipo confirma cada orden y se puede reintentar. |
+| Monitoreo | Con el equipo pausado decía «sin datos» o «SIN FLUJO». | «Circuito en pausa» con icono y botón «Reanudar». |
+| Monitoreo | Semáforo, hora técnica, seis tarjetas y gráfico compitiendo. | Estado grande → caudal de entrada, salida y diferencia → gráfico → «Detalles» plegable. |
+| Monitoreo | Jerga: «(FIRMWARE)», «Sensor entrada YF-S201», tópicos MQTT. | Lenguaje simple: «Caudal de entrada», «Señal WiFi», «Dispositivo». |
+| Monitoreo | Cuatro puntitos de colores sin explicación. | Se eliminaron; el estado usa color + icono + texto. |
+| Monitoreo | Gráfico con eje Y irregular y líneas que se tapaban. | Eje Y con marcas 0, 1, 2, 3…, entrada continua, salida discontinua, leyenda con valores y aviso «Sin flujo». |
+| Monitoreo | Fecha y hora completas de Lima en el cuerpo. | «Última lectura hace 2 s»; la hora de Lima queda en «Detalles». |
+| Monitoreo | WiFi solo en dBm. | «Buena / Regular / Débil» + dBm (umbrales en la sección 4). |
+| Consulta | Primero el diagnóstico, el mensaje en bruto y los descartados. | Primero el historial de cambios de estado. |
+| Consulta | «(Lima, UTC-5)» repetido en cada fila. | Una sola vez en el encabezado; cada fila con hora corta, transición, duración y valores. |
+| Consulta | Sin filtros. | Filtros «Todos / Fugas / Desviaciones». |
+| Consulta | Texto de alcance técnico (RAM, MySQL) en el cuerpo. | «Este historial se guarda mientras la app está abierta». Lo técnico va en «Acerca de». |
+| Conexión | Modo DEMO y TLS primero; el estado y los datos después. | Estado → datos → Conectar/Desconectar → «Opciones avanzadas» plegable. |
+| Conexión | Campos deshabilitados con bajo contraste al conectar. | Campos bloqueados, legibles, con candado y aviso «Desconecta para cambiar estos datos». |
+| Conexión | La contraseña podía quedar visible. | Oculta por defecto; se vuelve a ocultar al conectar, al cambiar de pestaña y al pasar a segundo plano. |
+| Conexión | Título «Conexión al Broker MQTT». | Título «Conexión» y ayudas simples: «Dirección del servidor», ejemplo `192.168.0.20`. |
+| Global | Cada pantalla tenía una barra distinta; solo Monitoreo mostraba la conexión. | Barra común con nombre + chip Conectado / Sin conexión / Demo + ayuda. |
+| Global | «Fuga crítica», «SIN FLUJO», «DESVIACION». | «Fuga», «Sin flujo», «Desviación», «Normal», «En pausa». |
+| Global | El color podía ser el único indicador. | Siempre color + icono + texto; DEMO usa violeta. |
+| Global | Sin etiquetas para lectores de pantalla. | `Semantics` en estado, cifras, botones, gráfico, historial y alertas. |
+| Global | Rejillas fijas que podían desbordar con texto grande. | `Wrap`, `Flexible`, `Expanded`, `IntrinsicHeight` y scroll; probado para crecer con el texto. |
+
+---
+
+## 3. Control: máquina de estados de los botones
+
+La lógica vive en `lib/models/estado_control.dart` y se prueba sin broker en `test/maquina_estados_control_test.dart`.
+
+| Estado real | «Pausar» | «Reanudar» | Mensaje / acción |
+| :--- | :---: | :---: | :--- |
+| Activo | Habilitado | Deshabilitado | «Puedes pausar la medición». |
+| En pausa | Deshabilitado | Habilitado y principal | «Puedes reanudar la medición». |
+| Orden enviada | Deshabilitado | Deshabilitado | «Esperando confirmación del equipo…» + progreso. |
+| Sin confirmación (5 s) | Deshabilitado | Deshabilitado | «No se recibió confirmación…» + «Reintentar». |
+| Sin conexión | Deshabilitado | Deshabilitado | «Conéctate al servidor para controlar el equipo» + «Ir a Conexión». |
+| Modo DEMO | Deshabilitado | Deshabilitado | «Modo DEMO: los controles no envían órdenes reales». |
+| Estado desconocido | Deshabilitado | Deshabilitado | «Todavía no conocemos el estado del equipo». |
+
+> **Seguridad hidráulica:** pausar detiene la medición y la publicación de datos del ESP32; **no cierra electroválvulas ni detiene el flujo de agua**.
+
+---
+
+## 4. Señal WiFi: umbrales orientativos
+
+Se muestran en «Detalles» de Monitoreo, junto al valor en dBm.
+
+| Calidad | RSSI | Lectura para el usuario |
+| :--- | :--- | :--- |
+| **Buena** | ≥ −60 dBm | La señal del equipo es estable. |
+| **Regular** | −61 a −75 dBm | La señal puede perder mensajes de vez en cuando. |
+| **Débil** | < −75 dBm | Acerca el equipo al router o revisa su antena. |
+
+Son umbrales orientativos de laboratorio, no una garantía de cobertura.
+
+---
+
+## 5. Arquitectura de comunicación y tópicos MQTT
+
+La app se comunica con un broker **EMQX**. Los tópicos y formatos no cambiaron:
+
+| Tópico | Dirección | QoS | Estado | Formato / descripción |
 | :--- | :--- | :---: | :---: | :--- |
-| `unt/iot/g2/riego/telemetria` | ESP32 $\rightarrow$ App | 0 | **Real (Existente)** | JSON con telemetría: `{"dispositivo":"ESP32","caudal_entrada":12.5,"caudal_salida":10.0,"diferencia_l_min":2.5,"diferencia_porcentaje":20.0,"volumen_entrada":150.2,"volumen_salida":140.0,"estado":"DESVIACION","rssi":-68}`. El mensaje de inicio `{"mensaje":"ESP32 conectado"}` es descartado de forma segura. |
-| `unt/iot/g2/riego/comando` | App $\rightarrow$ ESP32 | 1 | **Propuesta técnica** | `{"orden":"PAUSAR"}` o `{"orden":"REANUDAR"}`. Permite suspender o reanudar la medición del ESP32. |
-| `unt/iot/g2/riego/equipo` | ESP32 $\rightarrow$ App | 1 | **Propuesta técnica** | `{"activo":true}` o `{"activo":false}` (Retained). Informa el estado real del nodo emisor con confirmación. |
+| `unt/iot/g2/riego/telemetria` | ESP32 → App | 0 | Implementado | JSON con caudales, volúmenes, estado y RSSI. El mensaje de arranque `{"mensaje":"ESP32 conectado"}` se ignora de forma segura. |
+| `unt/iot/g2/riego/comando` | App → ESP32 | 1 | Implementado | `{"orden":"PAUSAR"}` o `{"orden":"REANUDAR"}`. |
+| `unt/iot/g2/riego/equipo` | ESP32 → App | 1 | Implementado | `{"activo":true}` o `{"activo":false}` (retained). Es la fuente del estado real de los botones. |
 
-> [!WARNING]
-> **Aviso de seguridad hidráulica**:
-> La orden **Pausar** detiene exclusivamente el conteo y la publicación de telemetría del ESP32; **no cierra físicamente electroválvulas ni detiene el flujo de agua en la tubería**.
+La app no publica telemetría ni modifica los payloads; solo consume lecturas, muestra el estado y envía órdenes.
 
 ---
 
-## 3. Matriz de Control de Acceso (ACL) y Mínimo Privilegio
+## 6. Seguridad y validación
 
-Para garantizar el principio de mínimo privilegio en el broker EMQX, se establece la separación estricta de credenciales y permisos entre la aplicación móvil y el firmware:
-
-| Usuario | Acción Permitida | Tópicos Autorizados | Justificación de Seguridad |
-| :--- | :--- | :--- | :--- |
-| **`app_movil_user`** (Aplicación) | `SUBSCRIBE` (Lectura)<br>`PUBLISH` (Escritura) | `unt/iot/g2/riego/telemetria`<br>`unt/iot/g2/riego/equipo`<br>`unt/iot/g2/riego/comando` | La aplicación móvil solo necesita consumir lecturas y telemetría, y emitir órdenes de control. **No debe publicar lecturas falsas de caudal**. |
-| **`esp32_sensor_user`** (Firmware) | `PUBLISH` (Escritura)<br>`SUBSCRIBE` (Lectura) | `unt/iot/g2/riego/telemetria`<br>`unt/iot/g2/riego/equipo`<br>`unt/iot/g2/riego/comando` | El nodo físico solo debe publicar mediciones y su estado retenido, escuchando órdenes en el canal de comando. |
-
-> [!IMPORTANT]
-> **Recomendación de credenciales**:
-> La app **no debe compartir ni reutilizar las credenciales del ESP32**. En entornos de producción y entrega de laboratorio, cada cliente móvil debe autenticarse con su propio usuario y contraseña restringido por ACL.
-
----
-
-## 4. Estado de los Mecanismos de Seguridad
-
-| Mecanismo de Seguridad | Clasificación | Estado de Implementación |
+| Mecanismo | Estado | Detalle |
 | :--- | :---: | :--- |
-| **Aislamiento de credenciales en memoria volátil** | Implementado | La contraseña se mantiene exclusivamente en memoria RAM mientras dura la sesión; se borra automáticamente al desconectar. No se guarda en disco, SharedPreferences, SQLite ni se imprime en logs o errores. |
-| **Validación de entradas de conexión** | Implementado | Validación estricta que impide espacios en blanco y esquemas (`http://`, `mqtt://`, etc.) en el host. Puerto validado en el rango 1 a 65535. Usuario normalizado sin espacios. |
-| **Validación de tipos y rangos físicos** | Implementado | Filtra caudales $< 0$, variaciones porcentuales fuera de $[-100{,}0\text{ \%}, 100{,}0\text{ \%}]$, estados no reconocidos y RSSI fuera de $[-120, 0]\text{ dBm}$. Los mensajes anómalos se descartan sin romper la app. |
-| **Auditoría de mensajes descartados** | Implementado | Conteo en tiempo real de mensajes descartados por violación de rangos o formato, visible en la pantalla de Consulta. |
-| **Soporte TLS / MQTTS (TCP seguro)** | Implementado | Conexión cifrada opcional sobre puerto 8883 utilizando el `SecurityContext` del sistema sin bypass de certificados CA no válidos. |
-| **Protección contra doble envío** | Implementado | Bloqueo automático de doble toque durante 2 segundos y diálogo de confirmación antes de pausar. |
-| **Timeout de confirmación ("sin confirmar")** | Implementado | Si en 5 segundos no arriba la confirmación en `unt/iot/g2/riego/equipo`, el estado pasa a "sin confirmar". |
-| **Listas de control de acceso (ACL) en EMQX** | Propuesto | Esquema de reglas de autorización por usuario y tópico documentado para configuración en el panel de EMQX. |
-| **Autenticación mTLS (Certificados de cliente)** | Propuesto | Despliegue de certificados X.509 individuales por dispositivo móvil para evitar credenciales estáticas. |
-| **Servicio de persistencia histórica MySQL** | Pendiente | Requiere el desarrollo de una API REST de backend que consulte la base de datos relacional del proyecto `[POR COMPLETAR]`. |
+| Contraseña solo en memoria | Implementado | No se guarda en disco, preferencias, SQLite ni logs. Se borra al desconectar. |
+| Contraseña oculta | Implementado | Oculta por defecto; se vuelve a ocultar al conectar, al salir de la pestaña y al pasar la app a segundo plano. |
+| Validación de dirección y puerto | Implementado | Sin espacios ni esquemas en la dirección; puerto entre 1 y 65535. |
+| Validación de rangos | Implementado | Se descartan caudales negativos, diferencias fuera de ±100 %, estados desconocidos y RSSI fuera de [−120, 0] dBm. |
+| Protección contra doble envío | Implementado | El botón queda deshabilitado mientras se espera la confirmación; ya no se usa un bloqueo fijo de 2 s. |
+| Confirmación de órdenes | Implementado | El estado real se lee del mensaje retenido del equipo; si no llega en 5 s se ofrece «Reintentar». |
+| TLS opcional | Implementado | Disponible en «Opciones avanzadas» (puerto 8883), sin bypass de certificados. |
+| ACL en EMQX | Propuesto | Esquema por usuario y tópico documentado para configurar en el panel. |
+| mTLS con certificados de cliente | Propuesto | Pendiente de despliegue de certificados X.509 por dispositivo. |
+| Persistencia histórica MySQL | Pendiente | Requiere una API REST intermedia. `[POR COMPLETAR]` |
 
 ---
 
-## 5. Limitaciones Conocidas del Proyecto
+## 7. Accesibilidad
 
-1. **Persistencia histórica en MySQL**: La app no consulta directamente la base de datos MySQL debido a que requiere una API de backend intermedia que aún no existe en el proyecto `[POR COMPLETAR]`.
-2. **Implementación de órdenes en firmware**: Los comandos de pausa y reanudación dependen de una actualización pendiente en el firmware del ESP32 que procese el tópico `unt/iot/g2/riego/comando`.
-3. **Cifrado TLS en el laboratorio**: El broker EMQX actual del laboratorio universitario opera en TCP plano (puerto 1883 sin TLS); la app incluye el soporte TLS para cuando el broker configure certificados válidos.
-4. **Pruebas de campo en instalaciones UNT**: La app fue evaluada en laboratorio y mediante simuladores; la validación hidráulica con flujo real en el campus universitario se encuentra `[POR COMPLETAR]`.
-
----
-
-## 6. Guía de Uso y Modos de Prueba
-
-### A. Modo DEMO (Sin broker MQTT)
-Ideal para demostraciones académicas y pruebas de interfaz sin necesidad de conexión física:
-1. Diríjase a la sección **Conexión**.
-2. Active el interruptor **Modo DEMO**.
-3. Se iniciará la reproducción cíclica de 60 registros ficticios desde `assets/demo_telemetria.csv` a razón de 1 lectura por segundo.
-4. Aparecerá un letrero permanente: `"DEMO · datos de ejemplo"`.
-5. Los botones de control se deshabilitarán automáticamente para prevenir operaciones inválidas.
-
-### B. Modo Conexión al Broker Real
-1. Ingrese a la pestaña **Conexión**.
-2. Desactive el Modo DEMO si estaba habilitado.
-3. Ingrese la IP del equipo donde corre EMQX (ej. `192.168.1.100` o dominio del broker).
-4. El puerto predeterminado es `1883` (o `8883` si activa TLS).
-5. Ingrese usuario y contraseña si el broker tiene autenticación habilitada.
-6. Presione **Conectar al Broker**. El indicador pasará a verde una vez confirmada la suscripción.
+- Áreas táctiles de 48 dp o más en botones, chips, iconos y filas plegables.
+- Texto con contraste orientativo ≥ 4,5:1 sobre sus fondos (ver `docs/auditoria_ux.md`).
+- La interfaz usa scroll, `Wrap`, `Flexible` y `Expanded` para crecer con el texto del sistema hasta 200 %.
+- El color nunca es el único indicador: cada estado incluye icono y palabra.
+- Etiquetas `Semantics` en estado, cifras, botones, gráfico, historial y alertas.
+- Ayuda breve desde el icono «?» de la barra superior, con los cuatro estados y la pausa.
 
 ---
 
-## 7. Compilación y Ejecución de Pruebas
+## 8. Guía rápida
 
-### Compilación Local
+### Modo DEMO (sin broker)
+1. Abre **Conexión**.
+2. Despliega **Opciones avanzadas**.
+3. Activa **Modo DEMO**. Se reproducen datos de ejemplo desde `assets/demo_telemetria.csv`.
+4. Aparece el letrero violeta «Demo · datos de ejemplo».
+5. Los controles de pausa/reanudar quedan deshabilitados porque no hay un equipo real.
+
+### Conexión real
+1. Abre **Conexión**.
+2. Revisa el estado de la conexión y completa la **Dirección del servidor** y el **Puerto** (`1883`, o `8883` con TLS).
+3. Ingresa usuario y contraseña si el servidor los pide.
+4. Presiona **Conectar**.
+5. En **Monitoreo** verás el estado y los caudales; en **Control** podrás pausar o reanudar.
+
+### Lectura del historial
+- **Consulta** muestra primero los cambios más recientes.
+- La hora de Lima (UTC-5) aparece una vez en el encabezado.
+- Cada fila indica hora corta, estado anterior → nuevo, duración del estado anterior y valores clave.
+- Usa «Todos / Fugas / Desviaciones» para filtrar.
+- «Diagnóstico» y «Ver último mensaje» quedan al final para revisar mensajes descartados o el JSON recibido.
+
+---
+
+## 9. Compilación y pruebas
+
 ```bash
-# 1. Obtener dependencias
 flutter pub get
-
-# 2. Ejecutar suite de pruebas unitarias
 flutter test
-
-# 3. Compilar APK Release para Android
 flutter build apk --release
 ```
 
-### Compilación en GitHub Actions
-El flujo de CI en `.github/workflows/apk.yml` compila el APK automáticamente:
-- Genera la plataforma Android con application ID `com.unt.g2.fugas`.
-- Inyecta el permiso `android.permission.INTERNET`.
-- Ejecuta `flutter pub get` y `flutter test`.
-- Compila `flutter build apk --release` y publica el artefacto descargable `app-release.apk`.
+El flujo de GitHub Actions compila el APK y ejecuta `flutter test`. No se modificó `.github/workflows/apk.yml`.
+
+Verificado con Flutter 3.47.9 / Dart 3.13.7: `flutter analyze` terminó **sin incidencias**, `flutter test` pasó **43/43** y `flutter build bundle` compiló toda la app. El APK no se compiló en este entorno porque no hay Android SDK; de eso se encarga GitHub Actions.
+
+Pruebas añadidas:
+- `test/maquina_estados_control_test.dart`: activo, pausado, enviando, sin confirmar, sin conexión, DEMO, desconocido y prioridades.
+- `test/presentacion_test.dart`: antigüedad relativa, duraciones, hora de Lima, umbrales WiFi, nombres de estados y formato numérico.
+
+Ninguna prueba usa clases internas de `mqtt_client` ni necesita un broker real.
 
 ---
 
-## 8. Capturas de Pantalla
+## 10. Puntos a revisar a mano en el celular
 
-*Capturas de pantalla de la aplicación en ejecución: [POR COMPLETAR]*
+- [ ] Instalar el APK y comprobar que la barra superior no desborda con **texto al 200 %** en una pantalla pequeña.
+- [ ] Activar TalkBack y recorrer Monitoreo, Control y Conexión: estado, cifras y botones deben leerse una sola vez y con sentido.
+- [ ] Probar la pausa y la reanudación con el equipo real: confirmar que el estado de los botones cambia solo cuando llega el mensaje retenido.
+- [ ] Cortar la red justo después de enviar una orden y comprobar el mensaje «No se recibió confirmación» y «Reintentar».
+- [ ] Verificar que la contraseña se oculta al cambiar de pestaña y al mandar la app a segundo plano.
+- [ ] Revisar el gráfico con caudales reales: marcas del eje Y, línea continua/discontinua y aviso «Sin flujo».
+- [ ] Medir el contraste con una herramienta y ajustar si el centro educativo lo exige.
+- [ ] Confirmar que el firmware publica el estado retenido en `unt/iot/g2/riego/equipo` al arrancar y tras cada orden.
+
+---
+
+## 11. Limitaciones conocidas
+
+1. **Persistencia histórica**: el historial vive en memoria y se pierde al cerrar la app. La consulta a MySQL sigue `[POR COMPLETAR]` y requiere un backend.
+2. **Ayuda de primer uso automática**: se ofrece desde «?»; mostrarla una sola vez requeriría persistencia local y no se añadió una dependencia para eso. `[POR COMPLETAR]` si se desea.
+3. **Capturas de pantalla**: no se implementó `FLAG_SECURE` de Android. La contraseña se oculta al pasar a segundo plano, pero conviene revisarlo en el dispositivo.
+4. **Validación de campo**: la app fue evaluada en laboratorio; la validación hidráulica con flujo real en el campus está `[POR COMPLETAR]`.
+5. **TLS en el laboratorio**: el broker del laboratorio puede operar sin TLS; la app incluye el soporte para cuando se configuren certificados válidos.
+
+---
+
+## 12. Documentación de diseño
+
+- `docs/auditoria_ux.md`: tabla completa de problemas, principios violados y soluciones, más las decisiones y lo que no se pudo verificar.
+- `README.md`: este documento, con la tabla «Antes → Después», umbrales WiFi y la máquina de estados.
+
+## 13. Capturas de pantalla
+
+*Capturas de la app en ejecución: `[POR COMPLETAR]`.*

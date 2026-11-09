@@ -204,7 +204,7 @@ class MqttService {
       } else {
         _actualizarEstado(
           ConexionEstado.error,
-          'No se pudo conectar al broker. Verifique la IP del equipo y el puerto.',
+          'No se pudo conectar al servidor. Verifica la dirección y el puerto.',
         );
         return false;
       }
@@ -213,13 +213,13 @@ class MqttService {
       String mensajeSanitizado;
 
       if (usarTls && (errorStr.contains('handshake') || errorStr.contains('certificate') || errorStr.contains('tls'))) {
-        mensajeSanitizado = 'Fallo de negociación TLS o certificado no válido del broker.';
+        mensajeSanitizado = 'No se pudo establecer la conexión segura. Revisa el certificado del servidor.';
       } else if (usarTls && errorStr.contains('connection refused')) {
-        mensajeSanitizado = 'Conexión rechazada en puerto TLS ($puerto). Verifique la configuración del broker.';
+        mensajeSanitizado = 'El servidor rechazó la conexión en el puerto seguro ($puerto). Revisa su configuración.';
       } else if (errorStr.contains('socketexception')) {
-        mensajeSanitizado = 'No se pudo alcanzar el host. Verifique que la IP y el puerto sean correctos.';
+        mensajeSanitizado = 'No se pudo alcanzar el servidor. Verifica la dirección y el puerto.';
       } else {
-        mensajeSanitizado = 'Error de conexión al broker EMQX.';
+        mensajeSanitizado = 'No se pudo conectar al servidor. Inténtalo de nuevo.';
       }
 
       _actualizarEstado(ConexionEstado.error, mensajeSanitizado);
